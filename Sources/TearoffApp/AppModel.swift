@@ -44,7 +44,6 @@ final class AppModel: ObservableObject {
     /// Off in --demo mode (screenshots), so nothing touches the real settings.
     var persist = true
     var demo = false
-    var demoWindow: NSWindow?
     @Published var requestedPane: Pane?
 
     @Published var settings = TearoffSettings.load() {
@@ -431,21 +430,8 @@ final class AppModel: ObservableObject {
         requestedPane = pane
         if !files.isEmpty { open(files, autoPrint: false) }
         // let CI capture just this window: write its CGWindowID where the screenshot script looks
-        NSApp.activate(ignoringOtherApps: true)
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
-            let all = NSApp.windows.map { "\(type(of: $0)) \(Int($0.frame.width))x\(Int($0.frame.height)) visible=\($0.isVisible)" }
-            FileHandle.standardError.write(Data(("demo windows: " + all.joined(separator: "; ") + "\n").utf8))
-            if !NSApp.windows.contains(where: { $0.contentView != nil && $0.frame.width > 400 }) {
-                // SwiftUI didn't open its window (seen on headless CI): host the same view in an AppKit window
-                let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1000, height: 680),
-                                 styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
-                                 backing: .buffered, defer: false)
-                w.title = "Tearoff"
-                w.contentView = NSHostingView(rootView: MainView().environmentObject(self))
-                w.isReleasedWhenClosed = false
-                self.demoWindow = w
-            }
-            guard let w = NSApp.windows.first(where: { $0.contentView != nil && $0.frame.width > 400 }) else { return }
+            guard let w = AppDelegate.shared?.mainWindow else { return }
             let vf = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1280, height: 800)
             w.setContentSize(NSSize(width: min(1120, vf.width - 24), height: min(740, vf.height - 24)))
             w.center()
