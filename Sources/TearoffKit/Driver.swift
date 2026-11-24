@@ -10,6 +10,13 @@ public enum Driver {
 
     public static var isInstalled: Bool { FileManager.default.isExecutableFile(atPath: filterPath) }
 
+    /// True when the installed filter differs from the one inside this app (i.e. needs updating).
+    public static func isOutdated(comparedTo bundled: URL) -> Bool {
+        guard isInstalled, let a = try? Data(contentsOf: URL(fileURLWithPath: filterPath)),
+              let b = try? Data(contentsOf: bundled) else { return false }
+        return a != b
+    }
+
     public struct Stock { public var name: String; public var label: String; public var w: Int; public var h: Int }
 
     /// Label stocks offered (points).

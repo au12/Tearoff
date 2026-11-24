@@ -43,8 +43,6 @@ jobs:
             open -n build/Tearoff.app --stdout /tmp/tearoff.out --stderr /tmp/tearoff.err --args --demo "$@"
             for _ in $(seq 1 30); do [ -s /tmp/tearoff-window-id ] && break; sleep 0.5; done
             sleep 4
-            swift scripts/list_windows.swift Tearoff || true
-            tail -n 20 /tmp/tearoff.err || true
             if [ -s /tmp/tearoff-window-id ]; then
               screencapture -x -o -l "$(cat /tmp/tearoff-window-id)" "out/screenshots/$name.png"
             fi

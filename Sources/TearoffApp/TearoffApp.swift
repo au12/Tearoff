@@ -121,7 +121,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     func application(_ sender: NSApplication, open urls: [URL]) {
         // A PDF handed over by the Print dialog (PDF ▾ ▸ Print Label with Tearoff) lives in a temp
         // folder: print it straight away. Files opened from Finder get a preview first.
-        let fromPrintDialog = urls.allSatisfy { $0.path.hasPrefix("/private/var/folders") || $0.path.hasPrefix("/var/folders") }
+        let fromPrintDialog = urls.allSatisfy { $0.lastPathComponent.hasPrefix("tearoff-print-") }
         showMainWindow(pane: .labels)
         AppModel.shared.open(urls, autoPrint: fromPrintDialog ? true : nil)
     }

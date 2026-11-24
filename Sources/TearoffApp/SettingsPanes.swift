@@ -145,6 +145,9 @@ struct PrinterPane: View {
             if model.queues.isEmpty { model.refreshDriver() }
             if model.discovered.isEmpty && model.settings.printer == nil { model.scan() }
         }
+        .onChange(of: model.settings.printer) { p in
+            if case .network(let h, let port)? = p { hostField = port == 9100 ? h : "\(h):\(port)" }
+        }
         .onChange(of: model.settings.renderOptions) { _ in model.reprocessAll() }
         .onChange(of: model.settings.speed) { _ in model.scheduleQueueSync() }
         .onChange(of: model.settings.darkness == nil) { _ in model.scheduleQueueSync() }
@@ -205,6 +208,14 @@ struct DriverPane: View {
                 }
                 LabeledContent("Printers using it") {
                     Text(model.tearoffQueues.isEmpty ? "None" : model.tearoffQueues.joined(separator: ", "))
+                }
+                if model.driverOutdated {
+                    HStack {
+                        Label("The installed driver is older than this app.", systemImage: "arrow.triangle.2.circlepath")
+                            .foregroundStyle(.orange)
+                        Spacer()
+                        Button("Update Driver…") { model.updateDriver() }
+                    }
                 }
             }
 

@@ -56,6 +56,11 @@ Requires macOS 13 or later on Apple Silicon. The installer puts Tearoff in /Appl
 
 ## Set up (once)
 
+<p align="center">
+  <img src="docs/printer.png" width="420" alt="Printer pane: status, test label, calibrate, darkness and speed">
+  <img src="docs/driver.png" width="420" alt="Print Driver pane: install the system printer">
+</p>
+
 1. **Printer**: Tearoff looks for Zebras on your network. Click **Use**, or type the IP address. It asks the printer for its
    resolution (203/300/600 dpi). macOS asks once to allow local network access; click Allow.
 2. **Print Driver**: click **Install Driver & Add Printer** and enter your password. This adds e.g. "Zebra GX420d" to macOS,

@@ -63,6 +63,7 @@ final class AppModel: ObservableObject {
     @Published var queues: [QueueInfo] = []
     @Published var scanning = false
     @Published var driverInstalled = Driver.isInstalled
+    @Published var driverOutdated = false
     @Published var tearoffQueues: [String] = []
     @Published var alert: String?
 
@@ -226,6 +227,7 @@ final class AppModel: ObservableObject {
     }
 
     func scan() {
+        if demo { return }
         scanning = true
         net.async { [weak self] in
             let found = Discovery.scan()
@@ -267,14 +269,22 @@ final class AppModel: ObservableObject {
 
     func refreshDriver() {
         driverInstalled = Driver.isInstalled
+        let bundled = filterInBundle
         net.async { [weak self] in
             let qs = Driver.tearoffQueues()
             let all = Discovery.queues()
+            let outdated = bundled.map { Driver.isOutdated(comparedTo: $0) } ?? false
             DispatchQueue.main.async {
                 self?.tearoffQueues = qs
                 self?.queues = all
+                self?.driverOutdated = outdated
             }
         }
+    }
+
+    /// Re-installs the filter and PPD from this copy of the app and refreshes every Tearoff queue.
+    func updateDriver() {
+        installDriver(queueName: "", displayName: "", uri: "", convert: tearoffQueues)
     }
 
     var filterInBundle: URL? {
@@ -336,7 +346,7 @@ final class AppModel: ObservableObject {
         #!/bin/sh
         # Print dialog PDF service: $1 title, $2 options, $3 PDF. Copy it (the print system deletes
         # its temp file when we return) and hand it to Tearoff, which prints it right away.
-        dest="${TMPDIR:-/tmp}/tearoff-print-$$.pdf"
+        dest="/tmp/tearoff-print-$$.pdf"; touch "$dest" 2>/dev/null || dest="${TMPDIR:-/tmp}/tearoff-print-$$.pdf"
         cp "$3" "$dest" && open -b com.au12.tearoff "$dest"
         """
         do {
