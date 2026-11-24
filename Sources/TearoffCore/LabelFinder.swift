@@ -313,7 +313,7 @@ public enum LabelFinder {
         var codes: [LabelCandidate] = []
         if extras {
             codes = t.measure("find.extras") {
-                CodeFinder.find(big: big, scale: hb, linear: pageCodes, labels: chosen.map { $0.rect }, trace: t)
+                CodeFinder.find(big: big, scale: hb, labels: chosen.map { $0.rect }, trace: t)
             }
             t.count("extra_codes", codes.count)
         }

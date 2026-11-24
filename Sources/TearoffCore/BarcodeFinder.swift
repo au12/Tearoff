@@ -60,7 +60,9 @@ public enum BarcodeFinder {
 
     /// Finds linear barcodes in `img`. `ppi` is pixels per inch *at label scale*: it sets the size
     /// limits (bars up to 0.11 in, symbols at least 0.35 in long, quiet zones of 0.05 in).
-    public static func find(in img: GrayImage, ppi: Double, threshold: UInt8 = 128) -> [LinearBarcode] {
+    /// `robust` also accepts symbols whose module estimate needs refining (thin bars at 3–4 px per
+    /// module); the extra-code search uses it, label finding keeps the original, proven behaviour.
+    public static func find(in img: GrayImage, ppi: Double, threshold: UInt8 = 128, robust: Bool = false) -> [LinearBarcode] {
         let w = img.width, h = img.height
         guard w > 2, h > 2, ppi > 1 else { return [] }
         var bw = [UInt8](repeating: 0, count: w * h)
@@ -69,7 +71,7 @@ public enum BarcodeFinder {
         }
         let step = max(1, Int((ppi / 60).rounded()))
         var out: [LinearBarcode] = []
-        for r in group(scan(bw, width: w, height: h, ppi: ppi, step: step), step: step, ppi: ppi) {
+        for r in group(scan(bw, width: w, height: h, ppi: ppi, step: step, robust: robust), step: step, ppi: ppi) {
             out.append(make(r, axis: 0, rect: PixelRect(x0: r.a, y0: r.y0, x1: r.b, y1: r.y1)))
         }
         var t = [UInt8](repeating: 0, count: w * h)
@@ -78,7 +80,7 @@ public enum BarcodeFinder {
                 for y in 0..<h { for x in 0..<w { d[x * h + y] = s[y * w + x] } }
             }
         }
-        for r in group(scan(t, width: h, height: w, ppi: ppi, step: step), step: step, ppi: ppi) {
+        for r in group(scan(t, width: h, height: w, ppi: ppi, step: step, robust: robust), step: step, ppi: ppi) {
             out.append(make(r, axis: 1, rect: PixelRect(x0: r.y0, y0: r.a, x1: r.y1, y1: r.b)))
         }
         return out
@@ -90,7 +92,7 @@ public enum BarcodeFinder {
                       text: mostCommon(r.texts))
     }
 
-    static func scan(_ bw: [UInt8], width: Int, height: Int, ppi: Double, step: Int) -> [Seq] {
+    static func scan(_ bw: [UInt8], width: Int, height: Int, ppi: Double, step: Int, robust: Bool = false) -> [Seq] {
         guard width > 1 else { return [] }
         let maxRun = 0.11 * ppi, minLen = 0.35 * ppi, quiet = 0.05 * ppi
         var out: [Seq] = []
@@ -126,7 +128,7 @@ public enum BarcodeFinder {
                     let nextQuiet = j == nr || (!blk[j] && Double(ln[j]) >= quiet)
                     let count = end - i + 1
                     if count >= 25 && nextQuiet && Double(st[end] + ln[end] - st[i]) >= minLen {
-                        if let q = quantize(Array(ln[i...end])) {
+                        if let q = quantize(Array(ln[i...end]), robust: robust) {
                             let dir = code128Direction(q.modules)
                             var text: String? = nil
                             if dir != 0 {
@@ -190,7 +192,7 @@ public enum BarcodeFinder {
     }
 
     /// Module width + integer module counts if the run lengths look like a 1D symbology.
-    public static func quantize(_ runs: [Int]) -> (module: Double, modules: [Int])? {
+    public static func quantize(_ runs: [Int], robust: Bool = false) -> (module: Double, modules: [Int])? {
         guard !runs.isEmpty else { return nil }
         let sorted = runs.sorted()
         let k = max(1, sorted.count / 4)
@@ -229,7 +231,7 @@ public enum BarcodeFinder {
         var best: (resid: Double, x: Double, modules: [Int])? = nil
         let first = fit(x)
         if first.max <= 4 { best = (first.resid, x, first.modules) }
-        if best == nil || best!.resid > 0.12 {
+        if robust && (best == nil || best!.resid > 0.12) {
             var xs: [Double] = []
             for _ in 0..<3 {
                 let nx = refine(x)

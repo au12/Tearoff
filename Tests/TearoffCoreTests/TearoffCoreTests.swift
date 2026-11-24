@@ -305,7 +305,8 @@ final class ExtraCodeTests: XCTestCase {
         let runs = modules.enumerated().map { k, m in
             Int((Double(m) * 3.54 + (k % 2 == 0 ? -0.6 : 0.6)).rounded())
         }
-        let q = BarcodeFinder.quantize(runs)
+        XCTAssertNil(BarcodeFinder.quantize(runs))                // label finding keeps the strict reading
+        let q = BarcodeFinder.quantize(runs, robust: true)
         XCTAssertEqual(q?.modules ?? [], modules)
         XCTAssertNotNil(BarcodeFinder.code128Values(q?.modules ?? []))
     }

@@ -10,11 +10,12 @@ public enum CodeFinder {
 
     /// - Parameters:
     ///   - big: the page rendered at `scale` pixels per point.
-    ///   - linear: 1D barcodes found in `big`.
+    ///   - linear: 1D barcodes in `big`; by default a robust scan of its own (thin bars included).
     ///   - labels: regions already printed as labels (codes inside them are skipped).
-    public static func find(big: GrayImage, scale hb: Double, linear: [LinearBarcode], labels: [PageRect],
+    public static func find(big: GrayImage, scale hb: Double, linear: [LinearBarcode]? = nil, labels: [PageRect],
                             trace: PerfTrace? = nil) -> [LabelCandidate] {
         guard big.width > 2, big.height > 2, hb > 0 else { return [] }
+        let linear = linear ?? trace.measureOrRun("find.extras_barcodes") { BarcodeFinder.find(in: big, ppi: hb * 72, robust: true) }
         let qrs = trace.measureOrRun("find.extras_qr") { QRFinder.find(in: big, ppi: hb * 72) }
         func toPage(_ r: PixelRect) -> PageRect {
             PageRect(x0: Double(r.x0) / hb, y0: Double(r.y0) / hb, x1: Double(r.x1) / hb, y1: Double(r.y1) / hb)
