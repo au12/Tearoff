@@ -213,6 +213,23 @@ public enum Driver {
         return s
     }
 
+    /// When the driver files are already installed (the .pkg does that), adds/converts queues with
+    /// plain `lpadmin`, which admin users may do without a password. Returns false if macOS refused.
+    public static func addQueuesWithoutPrompt(_ r: InstallRequest) -> Bool {
+        guard isInstalled, FileManager.default.fileExists(atPath: ppdPath) else { return false }
+        let opts = optionArgs(dpi: r.dpi, label: r.label, darkness: r.darkness, speed: r.speed)
+            .split(separator: " ").map(String.init)
+        if !r.deviceURI.isEmpty {
+            let res = Shell.run("/usr/sbin/lpadmin", ["-p", r.queueName, "-E", "-v", r.deviceURI, "-P", ppdPath,
+                                                      "-D", r.displayName, "-L", "Tearoff", "-o", "printer-is-shared=false"] + opts)
+            if res.status != 0 { return false }
+        }
+        for c in r.convertQueues where c != r.queueName {
+            if Shell.run("/usr/sbin/lpadmin", ["-p", c, "-P", ppdPath] + opts).status != 0 { return false }
+        }
+        return true
+    }
+
     /// Installs the filter + PPD and creates/updates the queue. Shows the macOS admin prompt.
     /// Must be called on the main thread.
     public static func install(_ r: InstallRequest, filterSource: URL) throws {

@@ -77,7 +77,9 @@ public enum LabelFinder {
     }
 
     /// Finds the labels on a page, best first in reading order.
-    public static func find(page: PageContent, label: LabelSize = .fourBySix, render: RegionRenderer) -> [LabelCandidate] {
+    public static func find(page: PageContent, label: LabelSize = .fourBySix, trace: PerfTrace? = nil,
+                            render: RegionRenderer) -> [LabelCandidate] {
+        let t = trace ?? PerfTrace()
         let W = page.width, H = page.height
         guard W > 1, H > 1 else { return [] }
         let T = label.aspect
@@ -88,16 +90,18 @@ public enum LabelFinder {
         let A = 1600 / max(W, H) * 72      // analysis dpi
         let px = A / 72                      // pixels per point
         let aw = max(2, Int((W * px).rounded())), ah = max(2, Int((H * px).rounded()))
-        let gray = render(pageR, aw, ah, false)
+        let gray = t.measure("find.analysis_render") { render(pageR, aw, ah, false) }
         let ink = gray.mask(below: 160)
         let shortPx = Double(min(aw, ah))
         let minLen = max(Int(0.14 * shortPx), Int(0.5 * A))
         let gap = max(2, Int((0.06 * A).rounded()))
         let maxThick = max(2, Int((0.035 * A).rounded()))
-        let hs = LineFinder.horizontal(ink, width: aw, height: ah, minLength: minLen, gap: gap, maxThickness: maxThick)
-        let vs = LineFinder.vertical(ink, width: aw, height: ah, minLength: minLen, gap: gap, maxThickness: maxThick)
+        let hs = t.measure("find.lines") { LineFinder.horizontal(ink, width: aw, height: ah, minLength: minLen, gap: gap, maxThickness: maxThick) }
+        let vs = t.measure("find.lines") { LineFinder.vertical(ink, width: aw, height: ah, minLength: minLen, gap: gap, maxThickness: maxThick) }
         let tol = Double(max(3, Int((0.05 * A).rounded())))
-        let frames = LineFinder.frames(horizontal: hs, vertical: vs, tolerance: tol, minSide: 0.22 * shortPx)
+        let frames = t.measure("find.frames") { LineFinder.frames(horizontal: hs, vertical: vs, tolerance: tol, minSide: 0.22 * shortPx) }
+        t.count("lines", hs.count + vs.count)
+        t.count("frames", frames.count)
 
         let minSide = 0.18 * min(W, H)
         let aspectLo = max(1.0, T * 0.8), aspectHi = T * 1.3
@@ -133,15 +137,19 @@ public enum LabelFinder {
             }
         }
         let hb = (max(W, H) <= 9 * 72 ? 4400.0 : 3300.0) / max(W, H)   // px per point
-        let big = render(pageR, Int(W * hb), Int(H * hb), false)
+        let big = t.measure("find.page_render_hires") { render(pageR, Int(W * hb), Int(H * hb), false) }
         var seeds: [(Int, Int)] = []
-        for b in BarcodeFinder.find(in: big, ppi: hb * 72) {
+        let pageCodes = t.measure("find.page_barcodes") { BarcodeFinder.find(in: big, ppi: hb * 72) }
+        t.count("page_barcodes", pageCodes.count)
+        for b in pageCodes {
             seeds.append((Int(b.midX / hb * px), Int(b.midY / hb * px)))
         }
         if !seeds.isEmpty {
             let finder = BlockFinder(mask: mask, width: aw, height: ah)
             let minGap = max(2, Int((0.012 * shortPx).rounded()))
-            for b in finder.blocks(minGap: minGap, minSide: Int(minSide * px), seeds: seeds) {
+            let blocks = t.measure("find.blocks") { finder.blocks(minGap: minGap, minSide: Int(minSide * px), seeds: seeds) }
+            t.count("blocks", blocks.count)
+            for b in blocks {
                 let r = PageRect(x0: Double(b.x0) / px, y0: Double(b.y0) / px, x1: Double(b.x1) / px, y1: Double(b.y1) / px)
                 if r.aspect >= aspectLo && r.aspect <= aspectHi && min(r.width, r.height) >= minSide {
                     cands.append(LabelCandidate(kind: .block, rect: r))
@@ -160,12 +168,13 @@ public enum LabelFinder {
         cands = uniq
 
         // --- read barcodes inside every candidate at ~300 px per label-inch
+        t.count("candidates", cands.count)
         for i in cands.indices {
             var c = cands[i]
             let raster: GrayImage
             let ppi: Double
             if c.kind == .image, let n = c.native, min(n.width, n.height) >= 900 {
-                raster = render(c.rect, n.width, n.height, true)
+                raster = t.measure("find.candidate_render") { render(c.rect, n.width, n.height, true) }
                 ppi = Double(min(n.width, n.height)) / labelShort
             } else {
                 let s = 1200 / max(1, min(c.rect.width, c.rect.height))
@@ -174,13 +183,13 @@ public enum LabelFinder {
                     // the high-resolution page render is sharp enough: crop it instead of re-rendering
                     let crop = big.cropped(PixelRect(x0: Int((c.rect.x0 * hb).rounded()), y0: Int((c.rect.y0 * hb).rounded()),
                                                      x1: Int((c.rect.x1 * hb).rounded()), y1: Int((c.rect.y1 * hb).rounded())))
-                    raster = crop.resampled(width: rw, height: rh)
+                    raster = t.measure("find.candidate_render") { crop.resampled(width: rw, height: rh) }
                 } else {
-                    raster = render(c.rect, rw, rh, false)
+                    raster = t.measure("find.candidate_render") { render(c.rect, rw, rh, false) }
                 }
                 ppi = 1200 / labelShort
             }
-            c.barcodes = BarcodeFinder.find(in: raster, ppi: ppi)
+            c.barcodes = t.measure("find.candidate_barcodes") { BarcodeFinder.find(in: raster, ppi: ppi) }
             c.barcodeQuarter = BarcodeFinder.uprightQuarterTurns(c.barcodes)
             let d = c.dims
             c.aspect = max(d.0, d.1) / max(0.001, min(d.0, d.1))

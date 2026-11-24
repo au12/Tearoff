@@ -1,0 +1,8 @@
+#!/bin/bash
+# Last step: open Tearoff for the person at the screen.
+CONSOLE_USER=$(/usr/bin/stat -f %Su /dev/console)
+if [[ -n "$CONSOLE_USER" && "$CONSOLE_USER" != "root" && "$CONSOLE_USER" != "loginwindow" ]]; then
+  CONSOLE_UID=$(/usr/bin/id -u "$CONSOLE_USER")
+  /bin/launchctl asuser "$CONSOLE_UID" /usr/bin/sudo -u "$CONSOLE_USER" /usr/bin/open "/Applications/Tearoff.app" >/dev/null 2>&1 || true
+fi
+exit 0

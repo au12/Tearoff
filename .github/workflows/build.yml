@@ -9,6 +9,10 @@ on:
 permissions:
   contents: write
 
+env:
+  VERSION: 1.0.${{ github.run_number }}
+  BUILD: ${{ github.run_number }}
+
 jobs:
   macos:
     runs-on: macos-15   # Apple Silicon
@@ -19,7 +23,7 @@ jobs:
         run: swift test 2>&1 | tail -n 60; exit ${PIPESTATUS[0]}
 
       - name: Build Tearoff.app
-        run: ./build.sh
+        run: COMMIT="${GITHUB_SHA::7}" ./build.sh
 
       - name: Python test tools
         run: |
@@ -30,8 +34,29 @@ jobs:
       - name: Fixture tests (label finding, orientation, barcodes scan at 203 dpi)
         run: python3 tests/verify.py build/Tearoff.app/Contents/Helpers/tearoff tests/fixtures out/fixtures
 
-      - name: CUPS end-to-end (driver + lp + fake Zebra)
-        run: bash tests/cups_e2e.sh build/Tearoff.app out/cups
+      - name: Build installer package
+        run: scripts/make_pkg.sh
+
+      - name: Install the package like a user would
+        run: |
+          sudo installer -pkg dist/Tearoff.pkg -target /
+          sleep 3; pkill -x Tearoff || true          # the installer opens the app when it finishes
+          test -x /Applications/Tearoff.app/Contents/MacOS/Tearoff
+          test -x /Library/Printers/Tearoff/Filters/tearoff-filter
+          test -f /Library/Printers/Tearoff/Tearoff.ppd
+          test -x "/Library/PDF Services/Print Label with Tearoff"
+          stat -f "%Su:%Sg %Lp %N" /Library/Printers/Tearoff/Filters/tearoff-filter /Library/Logs/Tearoff /Users/Shared/Tearoff
+          /usr/local/bin/tearoff version
+          pkgutil --pkgs | grep au12
+          defaults read /Applications/Tearoff.app/Contents/Info.plist CFBundleShortVersionString
+
+      - name: CUPS end-to-end with the installed driver (lp + fake Zebra)
+        run: bash tests/cups_e2e.sh /Applications/Tearoff.app out/cups --installed
+
+      - name: Benchmark
+        run: |
+          /usr/local/bin/tearoff bench --runs 3 | tee out/bench.txt
+          mkdir -p out/perf && cp ~/Library/Logs/Tearoff/*.jsonl out/perf/ 2>/dev/null || true
 
       - name: Screenshots
         continue-on-error: true
@@ -40,18 +65,20 @@ jobs:
           shoot() {
             name="$1"; shift
             rm -f /tmp/tearoff-window-id
-            open -n build/Tearoff.app --stdout /tmp/tearoff.out --stderr /tmp/tearoff.err --args --demo "$@"
+            open -n /Applications/Tearoff.app --args --demo "$@"
             for _ in $(seq 1 30); do [ -s /tmp/tearoff-window-id ] && break; sleep 0.5; done
             sleep 4
-            if [ -s /tmp/tearoff-window-id ]; then
-              screencapture -x -o -l "$(cat /tmp/tearoff-window-id)" "out/screenshots/$name.png"
-            fi
-            screencapture -x "out/screenshots/$name-full.png"
+            [ -s /tmp/tearoff-window-id ] && screencapture -x -o -l "$(cat /tmp/tearoff-window-id)" "out/screenshots/$name.png"
             pkill -x Tearoff; sleep 2
           }
           shoot labels "$PWD/tests/fixtures/01_image_letter_dashed.pdf" "$PWD/tests/fixtures/04_two_up.pdf"
           shoot printer --pane printer
           shoot driver --pane driver
+          shoot automation --pane automation
+          open dist/Tearoff.pkg
+          sleep 8
+          id=$(swift scripts/window_id.swift Installer) && screencapture -x -o -l "$id" out/screenshots/installer.png
+          pkill -x Installer || true
           ls -la out/screenshots
 
       - name: Package
@@ -64,7 +91,9 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: Tearoff
-          path: dist/Tearoff.zip
+          path: |
+            dist/Tearoff.pkg
+            dist/Tearoff.zip
 
       - uses: actions/upload-artifact@v4
         if: always()
@@ -78,6 +107,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release delete latest --yes --cleanup-tag 2>/dev/null || true
-          gh release create latest dist/Tearoff.zip --title "Tearoff (latest build)" \
-            --notes "Built from ${GITHUB_SHA::7}. Install: curl -fsSL https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/main/get.sh | bash" \
+          gh release create latest dist/Tearoff.pkg dist/Tearoff.zip --title "Tearoff $VERSION" \
+            --notes "Build $BUILD from ${GITHUB_SHA::7}. Download **Tearoff.pkg** and open it, or: \`curl -fsSL https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/main/get.sh | bash\`" \
             --target "$GITHUB_SHA"

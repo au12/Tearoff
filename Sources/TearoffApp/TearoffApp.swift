@@ -62,6 +62,7 @@ struct MenuBarContent: View {
 final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate, NSWindowDelegate {
     static weak var shared: AppDelegate?
     var mainWindow: NSWindow?
+    private let launchedAt = ProcessInfo.processInfo.systemUptime
 
     override init() {
         super.init()
@@ -86,6 +87,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         UNUserNotificationCenter.current().delegate = self
         AppModel.shared.start()
         showMainWindow()
+        DispatchQueue.main.async {
+            let ms = (ProcessInfo.processInfo.systemUptime - self.launchedAt) * 1000
+            PerfLog.append(PerfLog.record(op: "launch", source: "app", ms: ms))
+        }
         // Launched by the Print dialog's PDF menu as a tool: argv = [exe, title, options, pdf]
         if a.count >= 4, FileManager.default.fileExists(atPath: a[3]) {
             AppModel.shared.open([URL(fileURLWithPath: a[3])], autoPrint: true)

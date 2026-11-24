@@ -227,12 +227,13 @@ struct DriverPane: View {
                         .textSelection(.enabled)
                 }
                 HStack {
-                    Button(model.tearoffQueues.contains(queueName) ? "Update Printer…" : "Install Driver & Add Printer…") {
+                    Button(model.tearoffQueues.contains(queueName) ? "Update Printer…" : (model.driverInstalled ? "Add Printer" : "Install Driver & Add Printer…")) {
                         model.installDriver(queueName: queueName, displayName: effectiveName, uri: deviceURI, convert: [])
                     }
                     .buttonStyle(.borderedProminent)
                     .disabled(deviceURI.isEmpty)
-                    Text("macOS asks for an administrator password once.").font(.caption).foregroundStyle(.secondary)
+                    Text(model.driverInstalled ? "Usually no password needed." : "macOS asks for an administrator password once.")
+                        .font(.caption).foregroundStyle(.secondary)
                 }
             }
 
@@ -342,8 +343,31 @@ struct AutomationPane: View {
             } footer: {
                 Text("Keeps the menu bar icon and Downloads watching running in the background.")
             }
+            Section {
+                Toggle("Keep a performance log", isOn: Binding(get: { PerfLog.enabled },
+                                                               set: { PerfLog.enabled = $0; model.objectWillChange.send() }))
+                LabeledContent("Recent") { Text(model.perfSummary).foregroundStyle(.secondary) }
+                HStack {
+                    Button(model.benchRunning ? "Running…" : "Run Benchmark") { model.runBenchmark() }
+                        .disabled(model.benchRunning)
+                    if model.benchRunning { ProgressView().controlSize(.small) }
+                    Text(model.benchStatus).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                }
+                HStack {
+                    Button("Show Log in Finder") {
+                        try? FileManager.default.createDirectory(at: PerfLog.directory, withIntermediateDirectories: true)
+                        NSWorkspace.shared.activateFileViewerSelecting([PerfLog.directory])
+                    }
+                    Text("Version \(BuildInfo.version) (\(BuildInfo.build))").font(.caption).foregroundStyle(.secondary)
+                }
+            } header: {
+                Text("Diagnostics")
+            } footer: {
+                Text("Timings for finding, rendering and sending labels (from the app, the command line and the ⌘P driver) go to ~/Library/Logs/Tearoff. Only timings, counts and sizes — never barcode contents. Nothing leaves your Mac.")
+            }
         }
         .formStyle(.grouped)
         .navigationTitle("Automation")
+        .onAppear { model.refreshPerfSummary() }
     }
 }

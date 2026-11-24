@@ -1,12 +1,14 @@
 #!/bin/bash
-# End-to-end through the real macOS printing system: installs the Tearoff driver, points a CUPS
-# queue at a fake Zebra on 127.0.0.1:9100, prints fixture PDFs with `lp` (exactly like ⌘P does)
-# and checks the ZPL that arrives: right number of labels, every barcode scans, all upright.
+# End-to-end through the real macOS printing system: a CUPS queue using the Tearoff driver points
+# at a fake Zebra on 127.0.0.1:9100; fixture PDFs are printed with `lp` (exactly what ⌘P does) and
+# the ZPL that arrives is decoded and scanned: right number of labels, every barcode upright.
 #
-#   bash tests/cups_e2e.sh build/Tearoff.app [OUTDIR]
+#   bash tests/cups_e2e.sh build/Tearoff.app [OUTDIR]               # installs the driver itself (sudo)
+#   bash tests/cups_e2e.sh /Applications/Tearoff.app OUTDIR --installed   # driver already installed by the .pkg
 set -uo pipefail
 APP="$1"
 OUT="${2:-cups-out}"
+MODE="${3:-}"
 CLI="$APP/Contents/Helpers/tearoff"
 ROOT=/Library/Printers/Tearoff
 rm -rf "$OUT"; mkdir -p "$OUT"
@@ -16,26 +18,26 @@ FAKE=$!
 trap 'kill $FAKE 2>/dev/null' EXIT
 sleep 1
 
-echo "→ Installing driver"
-"$CLI" ppd > "$OUT/Tearoff.ppd"
-sudo mkdir -p "$ROOT/Filters"
-sudo cp -f "$APP/Contents/Helpers/tearoff-filter" "$ROOT/Filters/tearoff-filter"
-sudo cp -f "$OUT/Tearoff.ppd" "$ROOT/Tearoff.ppd"
-sudo chown -R root:wheel "$ROOT"
-sudo chmod 755 "$ROOT" "$ROOT/Filters" "$ROOT/Filters/tearoff-filter"
-sudo chmod 644 "$ROOT/Tearoff.ppd"
+if [[ "$MODE" != "--installed" ]]; then
+  echo "→ Installing driver"
+  "$CLI" ppd > "$OUT/Tearoff.ppd"
+  sudo mkdir -p "$ROOT/Filters"
+  sudo cp -f "$APP/Contents/Helpers/tearoff-filter" "$ROOT/Filters/tearoff-filter"
+  sudo cp -f "$OUT/Tearoff.ppd" "$ROOT/Tearoff.ppd"
+  sudo chown -R root:wheel "$ROOT"
+  sudo chmod 755 "$ROOT" "$ROOT/Filters" "$ROOT/Filters/tearoff-filter"
+  sudo chmod 644 "$ROOT/Tearoff.ppd"
+fi
 (cupstestppd -W translations "$ROOT/Tearoff.ppd" || true) > "$OUT/cupstestppd.txt" 2>&1
 cat "$OUT/cupstestppd.txt"
 sudo cupsctl --debug-logging 2>/dev/null || true
 sudo lpadmin -p TearoffTest -E -v socket://127.0.0.1:9100 -P "$ROOT/Tearoff.ppd" -o printer-is-shared=false
 sudo cupsenable TearoffTest; sudo cupsaccept TearoffTest
-lpstat -p TearoffTest -l || true
 
 FIXTURES=(01_image_letter_dashed.pdf 03_vector_letter_unframed_rotated.pdf 04_two_up.pdf 08_browser_4x6_shrunk.pdf)
 for f in "${FIXTURES[@]}"; do
   echo "→ lp $f"
   lp -d TearoffTest -t "$f" "tests/fixtures/$f"
-  # one job at a time so captured jobs line up with fixtures
   for _ in $(seq 1 90); do
     [[ -z "$(lpstat -o TearoffTest 2>/dev/null)" ]] && break
     sleep 1
@@ -43,11 +45,15 @@ for f in "${FIXTURES[@]}"; do
   sleep 1
 done
 sleep 2
-sudo cat /var/log/cups/error_log 2>/dev/null | grep -iE "tearoff|filter|E \[" | tail -n 120 > "$OUT/cups_error_log.txt" || true
-cat "$OUT/cups_error_log.txt" | tail -n 40
-ls -la "$OUT"
+sudo cat /var/log/cups/error_log 2>/dev/null | grep -iE "tearoff|E \[" | tail -n 120 > "$OUT/cups_error_log.txt" || true
+grep -E "Tearoff (timing|perf log)|Tearoff:" "$OUT/cups_error_log.txt" | tail -n 12
 
-python3 - "$CLI" "$OUT" "${FIXTURES[@]}" <<'EOF'
+echo "→ Where the sandboxed filter could write its timing log:"
+for f in /Library/Logs/Tearoff/filter.jsonl /Users/Shared/Tearoff/filter.jsonl /private/tmp/tearoff-filter.jsonl; do
+  if [[ -s "$f" ]]; then echo "  ✓ $f ($(wc -l < "$f" | tr -d ' ') lines)"; cp "$f" "$OUT/$(echo "$f" | tr '/' '_')"; else echo "  ✗ $f"; fi
+done
+
+python3 - "$CLI" "$OUT" "${FIXTURES[@]}" <<'PY'
 import json, os, subprocess, sys
 import zxingcpp
 from PIL import Image
@@ -59,8 +65,7 @@ for i, name in enumerate(fixtures, start=1):
     if not os.path.exists(job):
         print(f"FAIL {name}: no job arrived at the printer"); fail += 1; continue
     zpl = open(job, "rb").read().decode("ascii", "replace")
-    prefix = os.path.join(out, f"job-{i}")
-    r = subprocess.run([cli, "zpl2png", job, prefix], capture_output=True, text=True)
+    r = subprocess.run([cli, "zpl2png", job, os.path.join(out, f"job-{i}")], capture_output=True, text=True)
     pngs = [l for l in r.stdout.split("\n") if l.endswith(".png")]
     exp = expected[name]["labels"]
     problems = []
@@ -78,7 +83,7 @@ for i, name in enumerate(fixtures, start=1):
     else:
         print(f"PASS {name}: {len(pngs)} label(s), {len(zpl)//1024} KB of ZPL")
 sys.exit(1 if fail else 0)
-EOF
+PY
 STATUS=$?
 
 echo "→ Status and identity against the fake printer"

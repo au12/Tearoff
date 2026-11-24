@@ -1,0 +1,17 @@
+#!/bin/bash
+# Runs as root after Tearoff.app is in /Applications.
+APP="/Applications/Tearoff.app"
+/bin/mkdir -p /usr/local/bin
+/bin/ln -sf "$APP/Contents/Helpers/tearoff" /usr/local/bin/tearoff
+/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$APP" >/dev/null 2>&1 || true
+
+# Tidy up after the old script installer (one copy of Tearoff only).
+CONSOLE_USER=$(/usr/bin/stat -f %Su /dev/console)
+if [[ -n "$CONSOLE_USER" && "$CONSOLE_USER" != "root" && "$CONSOLE_USER" != "loginwindow" ]]; then
+  USER_HOME=$(/usr/bin/dscl . -read "/Users/$CONSOLE_USER" NFSHomeDirectory 2>/dev/null | /usr/bin/awk '{print $2}')
+  if [[ -n "$USER_HOME" ]]; then
+    [[ -d "$USER_HOME/Applications/Tearoff.app" ]] && /bin/rm -rf "$USER_HOME/Applications/Tearoff.app"
+    [[ -L "$USER_HOME/.local/bin/tearoff" ]] && /bin/ln -sf "$APP/Contents/Helpers/tearoff" "$USER_HOME/.local/bin/tearoff"
+  fi
+fi
+exit 0

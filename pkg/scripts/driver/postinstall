@@ -1,0 +1,12 @@
+#!/bin/bash
+# CUPS only runs filters that are root-owned and not writable by others.
+ROOT=/Library/Printers/Tearoff
+/usr/sbin/chown -R root:wheel "$ROOT"
+/bin/chmod 755 "$ROOT" "$ROOT/Filters" "$ROOT/Filters/tearoff-filter"
+/bin/chmod 644 "$ROOT/Tearoff.ppd"
+/usr/bin/xattr -c "$ROOT/Filters/tearoff-filter" 2>/dev/null || true
+# Places the sandboxed driver may write its timing log (the app collects them).
+for d in /Library/Logs/Tearoff /Users/Shared/Tearoff; do
+  /bin/mkdir -p "$d" && /bin/chmod 1777 "$d"
+done
+exit 0

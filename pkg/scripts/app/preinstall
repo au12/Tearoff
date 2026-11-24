@@ -1,0 +1,4 @@
+#!/bin/bash
+# Quit a running Tearoff so the new version replaces it cleanly.
+/usr/bin/pkill -x Tearoff 2>/dev/null || true
+exit 0

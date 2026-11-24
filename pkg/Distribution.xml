@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<installer-gui-script minSpecVersion="2">
+    <title>Tearoff</title>
+    <organization>com.au12</organization>
+    <domains enable_localSystem="true"/>
+    <options customize="allow" require-scripts="false" hostArchitectures="arm64"/>
+    <volume-check>
+        <allowed-os-versions>
+            <os-version min="13.0"/>
+        </allowed-os-versions>
+    </volume-check>
+    <welcome file="welcome.html" mime-type="text/html"/>
+    <conclusion file="conclusion.html" mime-type="text/html"/>
+    <background file="background.png" mime-type="image/png" alignment="bottomleft" scaling="proportional"/>
+    <background-darkAqua file="background-dark.png" mime-type="image/png" alignment="bottomleft" scaling="proportional"/>
+
+    <choices-outline>
+        <line choice="app"/>
+        <line choice="driver"/>
+        <line choice="pdfservice"/>
+        <line choice="launch"/>
+    </choices-outline>
+
+    <choice id="app" title="Tearoff" enabled="false" selected="true"
+            description="The app: preview and print labels, set up your Zebra, watch Downloads. Also installs the tearoff command in /usr/local/bin.">
+        <pkg-ref id="com.au12.tearoff.app"/>
+    </choice>
+    <choice id="driver" title="Zebra printer driver" start_selected="true"
+            description="Lets every app's Print dialog send labels to your Zebra. Tearoff cuts the label out of whatever you print and fits it to 4×6. Installs into /Library/Printers/Tearoff; add your printer from the app afterwards.">
+        <pkg-ref id="com.au12.tearoff.driver"/>
+    </choice>
+    <choice id="pdfservice" title="Print dialog shortcut" start_selected="true"
+            description="Adds “Print Label with Tearoff” to the PDF menu of every Print dialog.">
+        <pkg-ref id="com.au12.tearoff.pdfservice"/>
+    </choice>
+    <choice id="launch" visible="false" enabled="false" selected="true" title="Open Tearoff">
+        <pkg-ref id="com.au12.tearoff.launch"/>
+    </choice>
+
+    <pkg-ref id="com.au12.tearoff.app" version="__VERSION__" onConclusion="none">TearoffApp.pkg</pkg-ref>
+    <pkg-ref id="com.au12.tearoff.driver" version="__VERSION__" onConclusion="none">TearoffDriver.pkg</pkg-ref>
+    <pkg-ref id="com.au12.tearoff.pdfservice" version="__VERSION__" onConclusion="none">TearoffPDFService.pkg</pkg-ref>
+    <pkg-ref id="com.au12.tearoff.launch" version="__VERSION__" onConclusion="none">TearoffLaunch.pkg</pkg-ref>
+</installer-gui-script>

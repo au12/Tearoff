@@ -66,6 +66,9 @@ final class AppModel: ObservableObject {
     @Published var driverOutdated = false
     @Published var tearoffQueues: [String] = []
     @Published var alert: String?
+    @Published var benchRunning = false
+    @Published var benchStatus = ""
+    @Published var perfSummary = ""
 
     let work = DispatchQueue(label: "tearoff.work", qos: .userInitiated)
     let net = DispatchQueue(label: "tearoff.net", qos: .utility)
@@ -74,12 +77,23 @@ final class AppModel: ObservableObject {
 
     private init() {}
 
+    let hangMonitor = HangMonitor()
+    var mergeTimer: Timer?
+
     func start() {
         refreshStatus()
         refreshDriver()
         updateWatcher()
+        hangMonitor.start()
         statusTimer = Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in
             self?.refreshStatus(quiet: true)
+        }
+        PerfLog.mergeFilterLogs()
+        mergeTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { _ in PerfLog.mergeFilterLogs() }
+        // the installer pre-creates these; make sure the sandboxed driver can log timings here
+        for dir in ["/Users/Shared/Tearoff"] where !FileManager.default.fileExists(atPath: dir) {
+            try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true,
+                                                     attributes: [.posixPermissions: 0o1777])
         }
     }
 
@@ -88,15 +102,23 @@ final class AppModel: ObservableObject {
     var renderOptions: RenderOptions { settings.renderOptions }
 
     /// Opens files; prints right away when asked to (or when Auto-print is on).
-    func open(_ urls: [URL], autoPrint: Bool? = nil) {
+    func open(_ urls: [URL], autoPrint: Bool? = nil, source: String = "app") {
         for url in urls {
             let opts = ExtractOptions(render: renderOptions, fallbackToPages: true)
             let shouldPrint = autoPrint ?? settings.autoPrintOnOpen
+            let dpi = settings.dpi
             working += 1
             work.async { [weak self] in
                 var doc = LabelDocument(url: url, name: url.lastPathComponent, labels: [], selected: [])
+                let trace = PerfTrace()
+                defer {
+                    PerfLog.append(PerfLog.record(op: "extract", source: source, trace: trace, extra: [
+                        "file": url.lastPathComponent, "bytes": (try? FileManager.default.attributesOfItem(atPath: url.path))?[.size] as? Int ?? 0,
+                        "labels": doc.labels.count, "kinds": doc.labels.map { $0.kind }, "dpi": dpi, "error": doc.error ?? "",
+                    ]))
+                }
                 do {
-                    doc.labels = try LabelExtractor.extract(url: url, options: opts)
+                    doc.labels = try LabelExtractor.extract(url: url, options: opts, trace: trace)
                     doc.selected = Set(doc.labels.filter { $0.kind != "fallback" }.map { $0.id })
                     if doc.selected.isEmpty { doc.selected = Set(doc.labels.map { $0.id }) }
                 } catch {
@@ -152,12 +174,18 @@ final class AppModel: ObservableObject {
             NotificationCenter.default.post(name: .showPrinterSetup, object: nil)
             return
         }
-        let job = ZPL.job(labels.map { $0.image }, copies: copies, settings: settings.printSettings)
+        let trace = PerfTrace()
+        let job = trace.measure("zpl.encode") { ZPL.job(labels.map { $0.image }, copies: copies, settings: settings.printSettings) }
         let name = settings.printerName.isEmpty ? target.description : settings.printerName
         working += 1
         net.async { [weak self] in
             var err: String? = nil
-            do { try ZebraPrinter.send(job, to: target) } catch { err = error.localizedDescription }
+            do { try trace.measure("send") { try ZebraPrinter.send(job, to: target) } } catch { err = error.localizedDescription }
+            var kind = "queue"
+            if case .network = target { kind = "network" }
+            PerfLog.append(PerfLog.record(op: "print", source: "app", trace: trace, extra: [
+                "labels": labels.count, "copies": copies, "bytes": job.utf8.count, "target": kind, "error": err ?? "",
+            ]))
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 self.working -= 1
@@ -211,12 +239,18 @@ final class AppModel: ObservableObject {
         net.async { [weak self] in
             var h: PrinterHealth
             var ident: ZebraIdentity? = nil
+            let trace = PerfTrace()
+            var failure = ""
             do {
-                let s = try ZebraPrinter.status(host: host, port: port)
+                let s = try trace.measure("status") { try ZebraPrinter.status(host: host, port: port) }
                 h = s.isReady ? .ready(s.summary) : .problem(s.summary)
-                ident = try? ZebraPrinter.identity(host: host, port: port)
+                if self?.identity == nil { ident = trace.measure("identity") { try? ZebraPrinter.identity(host: host, port: port) } }
             } catch {
                 h = .offline("Offline")
+                failure = error.localizedDescription
+            }
+            if trace.elapsedMs > 800 || !failure.isEmpty {
+                PerfLog.append(PerfLog.record(op: "status", source: "app", trace: trace, extra: ["error": failure]))
             }
             DispatchQueue.main.async {
                 guard let self = self else { return }
@@ -230,8 +264,12 @@ final class AppModel: ObservableObject {
         if demo { return }
         scanning = true
         net.async { [weak self] in
-            let found = Discovery.scan()
+            let trace = PerfTrace()
+            let found = trace.measure("scan") { Discovery.scan() }
             let qs = Discovery.queues()
+            PerfLog.append(PerfLog.record(op: "discover", source: "app", trace: trace, extra: [
+                "found": found.count, "zebras": found.filter { $0.isZebra }.count,
+            ]))
             DispatchQueue.main.async {
                 self?.discovered = found
                 self?.queues = qs
@@ -300,10 +338,14 @@ final class AppModel: ObservableObject {
         let req = Driver.InstallRequest(queueName: queueName, displayName: displayName, deviceURI: uri,
                                         dpi: settings.dpi, label: settings.labelSize,
                                         darkness: settings.darkness, speed: settings.speed, convertQueues: convert)
+        let trace = PerfTrace()
         do {
-            try Driver.install(req, filterSource: filter)
+            // driver files from the installer package: just add the printer (usually no password)
+            let quick = Driver.isInstalled && !driverOutdated && trace.measure("lpadmin") { Driver.addQueuesWithoutPrompt(req) }
+            if !quick { try trace.measure("admin_install") { try Driver.install(req, filterSource: filter) } }
             if !uri.isEmpty { settings.installedQueue = queueName }
-            show("Installed. Choose “\(displayName)” in any Print dialog.")
+            show(uri.isEmpty ? "Driver updated." : "Added. Choose “\(displayName)” in any Print dialog.")
+            PerfLog.append(PerfLog.record(op: "driver_install", source: "app", trace: trace, extra: ["password_prompt": !quick]))
         } catch {
             alert = error.localizedDescription
         }
@@ -383,8 +425,13 @@ final class AppModel: ObservableObject {
     func downloaded(_ url: URL) {
         let opts = ExtractOptions(render: renderOptions, fallbackToPages: false)
         work.async { [weak self] in
-            guard let labels = try? LabelExtractor.extract(url: url, options: opts),
-                  !labels.isEmpty, labels.contains(where: { !$0.barcodes.isEmpty }) else { return }
+            let trace = PerfTrace()
+            let found = (try? LabelExtractor.extract(url: url, options: opts, trace: trace)) ?? []
+            PerfLog.append(PerfLog.record(op: "extract", source: "downloads", trace: trace, extra: [
+                "file": url.lastPathComponent, "labels": found.count, "kinds": found.map { $0.kind },
+            ]))
+            let labels = found
+            guard !labels.isEmpty, labels.contains(where: { !$0.barcodes.isEmpty }) else { return }
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 var doc = LabelDocument(url: url, name: url.lastPathComponent, labels: labels, selected: Set(labels.map { $0.id }))
@@ -422,6 +469,40 @@ final class AppModel: ObservableObject {
                 alert = "macOS didn’t allow that: \(error.localizedDescription)"
             }
             objectWillChange.send()
+        }
+    }
+
+    // MARK: Diagnostics
+
+    func runBenchmark() {
+        guard !benchRunning else { return }
+        let files = Benchmark.defaultFiles()
+        guard !files.isEmpty else { show("No benchmark PDFs in this build.", error: true); return }
+        benchRunning = true
+        benchStatus = "Starting…"
+        let opts = renderOptions
+        work.async { [weak self] in
+            let r = Benchmark.run(files: files, runs: 3, options: opts) { msg in
+                DispatchQueue.main.async { self?.benchStatus = msg }
+            }
+            PerfLog.append(Benchmark.record(r, source: "app"))
+            DispatchQueue.main.async {
+                self?.benchRunning = false
+                self?.benchStatus = r.summary + String(format: " · peak %.0f MB", r.peakMB)
+            }
+        }
+    }
+
+    /// One line about recent real-world timings, for the Diagnostics section.
+    func refreshPerfSummary() {
+        PerfLog.mergeFilterLogs()
+        PerfLog.queue.async { [weak self] in
+            func ms(_ r: [String: Any]?) -> String? { (r?["ms"] as? Double).map { "\(Int($0.rounded())) ms" } }
+            var parts: [String] = []
+            if let x = ms(PerfLog.recent(op: "extract", limit: 1).first) { parts.append("last label found in \(x)") }
+            if let x = ms(PerfLog.recent(op: "filter", limit: 1).first) { parts.append("last ⌘P job \(x) in the driver") }
+            if let x = ms(PerfLog.recent(op: "print", limit: 1).first) { parts.append("last send \(x)") }
+            DispatchQueue.main.async { self?.perfSummary = parts.isEmpty ? "No timings yet." : parts.joined(separator: " · ").capitalizedFirst }
         }
     }
 
@@ -507,5 +588,38 @@ enum Notifier {
             content.userInfo = ["path": p]
         }
         UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil))
+    }
+}
+
+extension String {
+    var capitalizedFirst: String { self.prefix(1).uppercased() + self.dropFirst() }
+}
+
+/// Logs main-thread stalls (> 250 ms) so UI hitches show up in the performance log.
+final class HangMonitor {
+    private let q = DispatchQueue(label: "tearoff.hangs", qos: .utility)
+    private var timer: DispatchSourceTimer?
+    private var waiting = false
+
+    func start() {
+        guard timer == nil else { return }
+        let t = DispatchSource.makeTimerSource(queue: q)
+        t.schedule(deadline: .now() + 2, repeating: 0.5)
+        t.setEventHandler { [weak self] in self?.ping() }
+        t.resume()
+        timer = t
+    }
+
+    private func ping() {
+        guard !waiting else { return }
+        waiting = true
+        let sent = ProcessInfo.processInfo.systemUptime
+        DispatchQueue.main.async { [weak self] in
+            let lag = (ProcessInfo.processInfo.systemUptime - sent) * 1000
+            self?.q.async { self?.waiting = false }
+            if lag > 250 {
+                PerfLog.append(PerfLog.record(op: "hang", source: "app", ms: lag))
+            }
+        }
     }
 }

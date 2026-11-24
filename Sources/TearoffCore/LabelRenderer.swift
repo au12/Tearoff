@@ -35,7 +35,8 @@ public enum LabelFit {
 public enum LabelRenderer {
 
     /// Renders a found label to a binary raster of exactly `options.size` at `options.dpi`.
-    public static func render(_ c: LabelCandidate, options: RenderOptions, fit: LabelFit? = nil, render: RegionRenderer) -> RenderedLabel {
+    public static func render(_ c: LabelCandidate, options: RenderOptions, fit: LabelFit? = nil, trace: PerfTrace? = nil,
+                              render: RegionRenderer) -> RenderedLabel {
         let (TW, TH) = options.size.dots(dpi: options.dpi)
         let q = ((c.quarterTurns % 4) + 4) % 4
         let mode = fit ?? (c.kind == .block ? .natural : .fill)
@@ -61,7 +62,9 @@ public enum LabelRenderer {
             rw = max(1, Int(Double(rw) * f)); rh = max(1, Int(Double(rh) * f))
             exact = false
         }
-        let g = render(rect, rw, rh, exact).rotated(quarterTurnsCW: q)
+        let raw = trace.measureOrRun("render.region") { render(rect, rw, rh, exact) }
+        let g = trace.measureOrRun("render.rotate") { raw.rotated(quarterTurnsCW: q) }
+        trace?.count("render_pixels", rw * rh)
         var dest: PixelRect? = nil
         if mode != .fill {
             // upright size in points → dots
@@ -76,12 +79,12 @@ public enum LabelRenderer {
             let ow = max(1, min(TW, Int((pw * k).rounded()))), oh = max(1, min(TH, Int((ph * k).rounded())))
             dest = PixelRect(x0: (TW - ow) / 2, y0: (TH - oh) / 2, x1: (TW - ow) / 2 + ow, y1: (TH - oh) / 2 + oh)
         }
-        return finish(g, options: options, into: dest)
+        return finish(g, options: options, into: dest, trace: trace)
     }
 
     /// Fits an upright high-resolution raster onto the label (or into `dest`), thresholds it and
     /// grid-fits barcodes.
-    public static func finish(_ g: GrayImage, options: RenderOptions, into dest: PixelRect? = nil) -> RenderedLabel {
+    public static func finish(_ g: GrayImage, options: RenderOptions, into dest: PixelRect? = nil, trace: PerfTrace? = nil) -> RenderedLabel {
         let (TW, TH) = options.size.dots(dpi: options.dpi)
         let gw = g.width, gh = g.height
         guard gw > 0, gh > 0 else { return RenderedLabel(image: GrayImage(width: TW, height: TH), gridFitted: 0, barcodeTexts: []) }
@@ -98,17 +101,17 @@ public enum LabelRenderer {
             }
             ox = (TW - ow) / 2; oy = (TH - oh) / 2
         }
-        let small = g.resampled(width: ow, height: oh)
+        let small = trace.measureOrRun("render.resample") { g.resampled(width: ow, height: oh) }
         var out = GrayImage(width: TW, height: TH)
         out.paste(small, x: ox, y: oy)
         var bits = out.thresholded(options.threshold)
 
         let hrPPI = Double(min(gw, gh)) / min(options.size.width, options.size.height)
-        let codes = BarcodeFinder.find(in: g, ppi: hrPPI)
+        let codes = trace.measureOrRun("render.barcodes") { BarcodeFinder.find(in: g, ppi: hrPPI) }
         var texts = codes.compactMap { $0.text }
         var fitted = 0
         if options.gridFit {
-            let plans = planGridFit(g, codes: codes, ppi: hrPPI)
+            let plans = trace.measureOrRun("render.gridfit_plan") { planGridFit(g, codes: codes, ppi: hrPPI) }
             fitted = applyGridFit(&bits, plans: plans, scale: Double(ow) / Double(gw), offsetX: ox, offsetY: oy)
             for p in plans where !texts.contains(p.text) { texts.append(p.text) }
         }
@@ -218,5 +221,14 @@ public enum LabelRenderer {
             n += 1
         }
         return n
+    }
+}
+
+extension Optional where Wrapped == PerfTrace {
+    /// Times `body` when a trace is present; otherwise just runs it.
+    @inline(__always)
+    public func measureOrRun<T>(_ name: String, _ body: () throws -> T) rethrows -> T {
+        if let t = self { return try t.measure(name, body) }
+        return try body()
     }
 }

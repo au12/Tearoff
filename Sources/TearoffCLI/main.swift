@@ -2,7 +2,7 @@ import Foundation
 import TearoffCore
 import TearoffKit
 
-let version = "1.0.0"
+let version = BuildInfo.version + (BuildInfo.build == "dev" ? "-dev" : " (build \(BuildInfo.build))")
 
 let usage = """
 tearoff \(version) — crisp Zebra labels from PDFs
@@ -17,6 +17,7 @@ tearoff \(version) — crisp Zebra labels from PDFs
   tearoff calibrate          calibrate the media sensor
   tearoff zpl2png FILE OUT   render ^GFA graphics in a ZPL file to OUT-N.png
   tearoff ppd                print the CUPS PPD [--dpi N] [--size WxH]
+  tearoff bench [FILE…]      time the pipeline (default: the bundled test PDFs) [--runs N]
 
 Render options: --dpi 203|300|600  --size 4x6  --no-gridfit  --whole-pages  --weight light|normal|bold
 Defaults come from the Tearoff app's settings.
@@ -38,6 +39,7 @@ var json = false
 var copies = 1
 var wholePages = false
 var target = settings.printer
+var runs = 3
 
 var i = 0
 func value() -> String {
@@ -51,6 +53,7 @@ while i < args.count {
     case "--out", "-o": outPath = value()
     case "--json": json = true
     case "--copies": copies = max(1, Int(value()) ?? 1)
+    case "--runs": runs = max(1, Int(value()) ?? 3)
     case "--dpi": settings.dpi = Int(value()) ?? 203
     case "--size":
         guard let s = LabelSize(string: value()) else { fail("bad --size (use e.g. 4x6)") }
@@ -74,8 +77,15 @@ while i < args.count {
 let extractOptions = ExtractOptions(render: settings.renderOptions, fallbackToPages: true, wholePages: wholePages)
 
 func labels(_ path: String) -> [ExtractedLabel] {
+    let trace = PerfTrace()
     do {
-        return try LabelExtractor.extract(url: URL(fileURLWithPath: path), options: extractOptions)
+        let found = try LabelExtractor.extract(url: URL(fileURLWithPath: path), options: extractOptions, trace: trace)
+        let bytes = (try? FileManager.default.attributesOfItem(atPath: path))?[.size] as? Int ?? 0
+        PerfLog.appendNow(PerfLog.record(op: "extract", source: "cli", trace: trace, extra: [
+            "file": URL(fileURLWithPath: path).lastPathComponent, "bytes": bytes, "labels": found.count,
+            "kinds": found.map { $0.kind }, "dpi": settings.dpi,
+        ]))
+        return found
     } catch {
         fail(error.localizedDescription)
     }
@@ -129,8 +139,13 @@ case "print":
         let found = labels(f)
         guard !found.isEmpty else { print("\(f): no label found"); continue }
         do {
-            try ZebraPrinter.send(ZPL.job(found.map { $0.image }, copies: copies, settings: settings.printSettings), to: t,
-                                  title: URL(fileURLWithPath: f).lastPathComponent)
+            let trace = PerfTrace()
+            let job = trace.measure("zpl.encode") { ZPL.job(found.map { $0.image }, copies: copies, settings: settings.printSettings) }
+            try trace.measure("send") { try ZebraPrinter.send(job, to: t, title: URL(fileURLWithPath: f).lastPathComponent) }
+            PerfLog.appendNow(PerfLog.record(op: "print", source: "cli", trace: trace, extra: [
+                "labels": found.count, "copies": copies, "bytes": job.utf8.count,
+                "target": { if case .network = t { return "network" } else { return "queue" } }(),
+            ]))
             print("\(f): sent \(found.count) label\(found.count == 1 ? "" : "s") to \(t)")
         } catch {
             fail(error.localizedDescription)
@@ -180,6 +195,21 @@ case "zpl2png":
 
 case "ppd":
     print(Driver.ppd(dpi: settings.dpi, label: settings.labelSize), terminator: "")
+
+case "bench":
+    let urls = files.isEmpty ? Benchmark.defaultFiles() : files.map { URL(fileURLWithPath: $0) }
+    guard !urls.isEmpty else { fail("no PDFs to benchmark (pass files, or run from the app bundle)") }
+    print("Tearoff \(version) on \(PerfLog.machine["cpu"] ?? "?"), macOS \(PerfLog.machine["macos"] ?? "?")")
+    let r = Benchmark.run(files: urls, runs: runs, options: settings.renderOptions)
+    for f in r.files {
+        print(String(format: "  %-42@ %2d label(s)  median %7.1f ms  min %7.1f ms", f.name as NSString, f.labels, f.medianMs, f.minMs))
+    }
+    print("Phases (median per run, summed over files):")
+    for (k, v) in r.phases.sorted(by: { $0.value > $1.value }) {
+        print(String(format: "  %-28@ %8.1f ms", k as NSString, v))
+    }
+    print(r.summary + String(format: " · peak %.0f MB", r.peakMB))
+    PerfLog.appendNow(Benchmark.record(r, source: "cli"))
 
 case "version", "--version":
     print(version)

@@ -41,18 +41,22 @@ snapped to the printer's dot grid. That includes labels sitting on a letter-size
 
 ## Install
 
+**[Download Tearoff.pkg](https://github.com/au12/Tearoff/releases/download/latest/Tearoff.pkg)** and open it. It's a standard macOS
+installer. Or, from Terminal (this downloads the same package and opens it, without the "unidentified developer" prompt):
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/au12/Tearoff/main/get.sh | bash
 ```
 
-Or build from source (Xcode or the Command Line Tools):
+<p align="center"><img src="docs/installer.png" width="560" alt="The Tearoff installer"></p>
 
-```bash
-git clone https://github.com/au12/Tearoff && cd Tearoff && ./install.sh
-```
+The installer puts Tearoff in /Applications and `tearoff` in /usr/local/bin. Two optional parts are on by default: the **Zebra
+printer driver** (/Library/Printers/Tearoff) and the **Print Label with Tearoff** item in every Print dialog's PDF menu. When it
+finishes, Tearoff opens. Requires macOS 13+ on Apple Silicon.
 
-Requires macOS 13 or later on Apple Silicon. The installer puts Tearoff in /Applications, links `~/.local/bin/tearoff` and adds
-**Print Label with Tearoff** to the PDF ▾ menu of every Print dialog.
+The package isn't notarized. If you downloaded it in a browser and macOS refuses to open it, go to System Settings →
+Privacy & Security and click **Open Anyway** (or use the Terminal line above). Building from source: `./install.sh` (Xcode or
+the Command Line Tools) builds the same package and opens it.
 
 ## Set up (once)
 
@@ -106,6 +110,14 @@ For each page, Tearoff:
 All of this is pure Swift in `Sources/TearoffCore`, with no Vision or other ML. The same code runs in the app, the CLI and the
 sandboxed CUPS filter.
 
+## Performance log
+
+Tearoff times every step: opening the PDF, finding the label, rendering, grid-fitting, encoding ZPL and sending it. The app,
+the `tearoff` command and the ⌘P driver all log one JSON line per job to `~/Library/Logs/Tearoff/` (`perf.jsonl` and
+`filter.jsonl`), along with launch time and any main-thread stalls. It records only timings, counts and sizes, never barcode
+contents, and nothing leaves your Mac. **Automation → Diagnostics** shows recent timings and has **Run Benchmark**, which times
+the bundled test labels so you can compare builds on the same Mac. The command-line equivalent is `tearoff bench`.
+
 ## Troubleshooting
 
 - **"Couldn't connect"**: check the IP on the printer's configuration label (Printer → Configuration Label, or hold
@@ -122,11 +134,14 @@ sandboxed CUPS filter.
 curl -fsSL https://raw.githubusercontent.com/au12/Tearoff/main/uninstall.sh | bash
 ```
 
+Removes the app, the driver and the printers that use it, the Print dialog item, the command, logs and the installer receipts.
+
 ## Development
 
 ```bash
 swift test                                    # core unit tests
 ./build.sh                                    # → build/Tearoff.app
+scripts/make_pkg.sh                           # → dist/Tearoff.pkg
 python3 tests/make_fixtures.py                # synthetic label PDFs (fake names and tracking numbers)
 python3 tests/verify.py build/Tearoff.app/Contents/Helpers/tearoff tests/fixtures out
 bash tests/cups_e2e.sh build/Tearoff.app      # real CUPS + driver + fake Zebra on :9100 (needs sudo)
@@ -134,7 +149,8 @@ bash tests/cups_e2e.sh build/Tearoff.app      # real CUPS + driver + fake Zebra 
 
 CI (`.github/workflows/build.yml`) runs on Apple Silicon: unit tests, every fixture through the extractor (each expected
 barcode must scan upright from the 203 dpi output), the full macOS print path (`lp` → Tearoff filter → fake Zebra → ZPL decoded and
-scanned), screenshots, and a rolling `latest` release used by `get.sh`.
+scanned), installing the real `.pkg` on the runner first, a benchmark, screenshots (including the installer), and a rolling
+`latest` release with `Tearoff.pkg`.
 
 Fixtures cover a Firefox-style Amazon/UPS return page with a squashed landscape image, USPS-style framed vector labels, unframed
 sideways labels, two-up sheets (framed and not), 4×6 pages (vector and 203 dpi raster), a browser printing a letter page onto 4×6

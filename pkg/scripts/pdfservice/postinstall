@@ -1,0 +1,9 @@
+#!/bin/bash
+/bin/chmod 755 "/Library/PDF Services/Print Label with Tearoff"
+# The system-wide item replaces a per-user one from the old script installer (no duplicates).
+CONSOLE_USER=$(/usr/bin/stat -f %Su /dev/console)
+if [[ -n "$CONSOLE_USER" && "$CONSOLE_USER" != "root" ]]; then
+  USER_HOME=$(/usr/bin/dscl . -read "/Users/$CONSOLE_USER" NFSHomeDirectory 2>/dev/null | /usr/bin/awk '{print $2}')
+  [[ -n "$USER_HOME" ]] && /bin/rm -f "$USER_HOME/Library/PDF Services/Print Label with Tearoff"
+fi
+exit 0

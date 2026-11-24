@@ -67,18 +67,21 @@ public enum LabelExtractor {
         throw TearoffError.unreadable(url.lastPathComponent)
     }
 
-    public static func extract(url: URL, options: ExtractOptions = ExtractOptions()) throws -> [ExtractedLabel] {
-        extract(pages: try pages(of: url), options: options)
+    public static func extract(url: URL, options: ExtractOptions = ExtractOptions(), trace: PerfTrace? = nil) throws -> [ExtractedLabel] {
+        let docPages = try trace.measureOrRun("extract.open") { try self.pages(of: url) }
+        trace?.set("pages", docPages.count)
+        return extract(pages: docPages, options: options, trace: trace)
     }
 
-    public static func extract(pages: [PageSource], options: ExtractOptions) -> [ExtractedLabel] {
+    public static func extract(pages: [PageSource], options: ExtractOptions, trace: PerfTrace? = nil) -> [ExtractedLabel] {
         var out: [ExtractedLabel] = []
         if !options.wholePages {
             for (i, p) in pages.enumerated() {
-                let content = p.content()
-                let found = LabelFinder.find(page: content, label: options.render.size, render: p.renderer)
+                let content = trace.measureOrRun("extract.content_scan") { p.content() }
+                trace?.count("embedded_images", content.images.count)
+                let found = LabelFinder.find(page: content, label: options.render.size, trace: trace, render: p.renderer)
                 for c in found {
-                    let r = LabelRenderer.render(c, options: options.render, render: p.renderer)
+                    let r = LabelRenderer.render(c, options: options.render, trace: trace, render: p.renderer)
                     out.append(ExtractedLabel(image: r.image, page: i + 1, kind: c.kind.rawValue, detail: describe(c),
                                               rect: c.rect, quarterTurns: c.quarterTurns, gridFitted: r.gridFitted,
                                               barcodes: unique(r.barcodeTexts + c.texts), dpi: options.render.dpi))
@@ -87,9 +90,13 @@ public enum LabelExtractor {
         }
         if out.isEmpty && (options.fallbackToPages || options.wholePages) {
             for (i, p) in pages.enumerated() {
-                if let l = wholePage(p, index: i + 1, options: options.render) { out.append(l) }
+                if let l = trace.measureOrRun("extract.whole_page", { wholePage(p, index: i + 1, options: options.render) }) {
+                    out.append(l)
+                }
             }
         }
+        trace?.set("labels", out.count)
+        trace?.set("grid_fitted", out.reduce(0) { $0 + $1.gridFitted })
         return out
     }
 

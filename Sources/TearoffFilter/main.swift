@@ -72,11 +72,13 @@ func run() -> Int32 {
         spooled = tmp
     }
 
-    let started = Date()
+    let trace = PerfTrace()
+    let inputBytes = (try? FileManager.default.attributesOfItem(atPath: input.path))?[.size] as? Int ?? 0
     let render = RenderOptions(dpi: dpi, size: stock, gridFit: gridFit, threshold: threshold)
     let labels: [ExtractedLabel]
     do {
-        labels = try LabelExtractor.extract(url: input, options: ExtractOptions(render: render, fallbackToPages: true, wholePages: wholePages))
+        labels = try LabelExtractor.extract(url: input, options: ExtractOptions(render: render, fallbackToPages: true, wholePages: wholePages),
+                                            trace: trace)
     } catch {
         emit("ERROR: \(error.localizedDescription)")
         if let s = spooled { try? FileManager.default.removeItem(at: s) }
@@ -88,16 +90,29 @@ func run() -> Int32 {
         return 1
     }
 
+    var zplBytes = 0
     for (i, l) in labels.enumerated() {
         // darkness is a printer setting (~SD): send it once, ahead of the first label
         let settings = PrintSettings(darkness: i == 0 ? darkness : nil, speed: speed)
-        FileHandle.standardOutput.write(Data(ZPL.label(l.image, copies: copies, settings: settings).utf8))
+        let zpl = trace.measure("zpl.encode") { Data(ZPL.label(l.image, copies: copies, settings: settings).utf8) }
+        zplBytes += zpl.count
+        trace.measure("zpl.write") { FileHandle.standardOutput.write(zpl) }
         emit("PAGE: \(i + 1) \(copies)")
         let codes = l.barcodes.isEmpty ? "" : " [\(l.barcodes.joined(separator: ", "))]"
         emit("DEBUG: Tearoff label \(i + 1): page \(l.page), \(l.detail), turned \(l.quarterTurns * 90) deg, \(l.gridFitted) barcode(s) grid-fitted\(codes)")
     }
-    let ms = Int(Date().timeIntervalSince(started) * 1000)
+    let ms = Int(trace.elapsedMs.rounded())
     emit("INFO: Tearoff: \(labels.count) label\(labels.count == 1 ? "" : "s") at \(dpi) dpi (\(ms) ms)")
+    emit("DEBUG: Tearoff timing: \(trace.summary)")
+    let rec = PerfLog.record(op: "filter", source: "filter", trace: trace, extra: [
+        "bytes_in": inputBytes, "bytes_out": zplBytes, "labels": labels.count, "copies": copies, "dpi": dpi,
+        "kinds": labels.map { $0.kind }, "job": args[1],
+    ])
+    if let path = PerfLog.appendFromFilter(rec) {
+        emit("DEBUG: Tearoff perf log: \(path)")
+    } else {
+        emit("DEBUG: Tearoff perf log: no writable location (\(String(cString: strerror(errno))))")
+    }
     return 0
 }
 
