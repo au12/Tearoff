@@ -1,0 +1,188 @@
+import Foundation
+
+public struct RenderOptions: Equatable {
+    public var dpi: Int = 203
+    public var size: LabelSize = .fourBySix
+    /// Redraw verified Code 128 symbols with whole-dot modules.
+    public var gridFit = true
+    /// Gray level below which a dot prints (128 = 50% coverage). Higher = bolder.
+    public var threshold = 128
+    public init(dpi: Int = 203, size: LabelSize = .fourBySix, gridFit: Bool = true, threshold: Int = 128) {
+        self.dpi = dpi; self.size = size; self.gridFit = gridFit; self.threshold = threshold
+    }
+}
+
+/// The finished, printer-ready label.
+public struct RenderedLabel {
+    /// Binary raster at the printer's resolution (0 = burn a dot).
+    public var image: GrayImage
+    /// Code 128 symbols that were redrawn on the dot grid.
+    public var gridFitted: Int
+    /// Decoded Code 128 texts (tracking numbers etc.).
+    public var barcodeTexts: [String]
+}
+
+public enum LabelRenderer {
+
+    /// Renders a found label to a binary raster of exactly `options.size` at `options.dpi`.
+    public static func render(_ c: LabelCandidate, options: RenderOptions, render: RegionRenderer) -> RenderedLabel {
+        let (TW, TH) = options.size.dots(dpi: options.dpi)
+        let q = ((c.quarterTurns % 4) + 4) % 4
+        var rw: Int, rh: Int
+        var exact = false
+        if c.kind == .image, let n = c.native {
+            rw = n.width; rh = n.height
+            exact = true
+            if max(rw, rh) < Int(1.2 * Double(max(TW, TH))) { rw *= 3; rh *= 3 }
+        } else {
+            let (cw, ch) = q % 2 == 0 ? (TW, TH) : (TH, TW)
+            let s = min(Double(cw) / c.rect.width, Double(ch) / c.rect.height)
+            rw = max(1, Int((c.rect.width * s * 3).rounded()))
+            rh = max(1, Int((c.rect.height * s * 3).rounded()))
+        }
+        // keep memory sane for very large embedded images
+        let maxPixels = 40_000_000
+        if rw * rh > maxPixels {
+            let f = (Double(maxPixels) / Double(rw * rh)).squareRoot()
+            rw = max(1, Int(Double(rw) * f)); rh = max(1, Int(Double(rh) * f))
+            exact = false
+        }
+        let g = render(c.rect, rw, rh, exact).rotated(quarterTurnsCW: q)
+        return finish(g, options: options)
+    }
+
+    /// Fits an upright high-resolution raster onto the label, thresholds it and grid-fits barcodes.
+    public static func finish(_ g: GrayImage, options: RenderOptions) -> RenderedLabel {
+        let (TW, TH) = options.size.dots(dpi: options.dpi)
+        let gw = g.width, gh = g.height
+        guard gw > 0, gh > 0 else { return RenderedLabel(image: GrayImage(width: TW, height: TH), gridFitted: 0, barcodeTexts: []) }
+        let sx = Double(TW) / Double(gw), sy = Double(TH) / Double(gh)
+        var ow = TW, oh = TH
+        if abs(sx / sy - 1) >= 0.04 {
+            let s = min(sx, sy)
+            ow = max(1, min(TW, Int((Double(gw) * s).rounded())))
+            oh = max(1, min(TH, Int((Double(gh) * s).rounded())))
+        }
+        let small = g.resampled(width: ow, height: oh)
+        var out = GrayImage(width: TW, height: TH)
+        let ox = (TW - ow) / 2, oy = (TH - oh) / 2
+        out.paste(small, x: ox, y: oy)
+        var bits = out.thresholded(options.threshold)
+
+        let hrPPI = Double(min(gw, gh)) / min(options.size.width, options.size.height)
+        let codes = BarcodeFinder.find(in: g, ppi: hrPPI)
+        var texts = codes.compactMap { $0.text }
+        var fitted = 0
+        if options.gridFit {
+            let plans = planGridFit(g, codes: codes, ppi: hrPPI)
+            fitted = applyGridFit(&bits, plans: plans, scale: Double(ow) / Double(gw), offsetX: ox, offsetY: oy)
+            for p in plans where !texts.contains(p.text) { texts.append(p.text) }
+        }
+        return RenderedLabel(image: bits, gridFitted: fitted, barcodeTexts: texts)
+    }
+
+    // MARK: Grid-fit
+
+    public struct GridFitPlan {
+        public var left: Double
+        public var right: Double
+        public var top: Int
+        public var bottom: Int
+        public var modules: [Int]
+        public var module: Double
+        public var text: String
+    }
+
+    /// Finds Code 128 symbols in an upright raster and measures them exactly. Only symbols that
+    /// decode with a valid checksum are planned, so a redraw can never change what scans.
+    public static func planGridFit(_ g: GrayImage, codes: [LinearBarcode], ppi: Double) -> [GridFitPlan] {
+        var plans: [GridFitPlan] = []
+        let W = g.width, H = g.height
+        for r in codes where r.axis == 0 && r.forward > r.reverse {
+            let y0 = r.rect.y0, y1 = min(H, r.rect.y1)
+            let bandTop = y0 + (y1 - y0) / 4
+            let bandBot = max(bandTop + 1, y1 - (y1 - y0) / 4)
+            let lo = max(0, r.rect.x0 - Int(0.08 * ppi)), hi = min(W, r.rect.x1 + Int(0.08 * ppi))
+            guard hi - lo > 10, bandBot <= H else { continue }
+            // column profile: a column is "bar" if most rows of the band are dark
+            var prof = [Bool](repeating: false, count: hi - lo)
+            let rows = bandBot - bandTop
+            for x in lo..<hi {
+                var n = 0
+                for y in bandTop..<bandBot where g.pixels[y * W + x] < 128 { n += 1 }
+                prof[x - lo] = n * 2 > rows
+            }
+            var st = [Int](), ln = [Int](), blk = [Bool]()
+            var cur = prof[0], start = 0
+            for i in 1..<prof.count where prof[i] != cur {
+                st.append(start); ln.append(i - start); blk.append(cur)
+                cur = prof[i]; start = i
+            }
+            st.append(start); ln.append(prof.count - start); blk.append(cur)
+            guard let i0 = blk.firstIndex(of: true), let i1 = blk.lastIndex(of: true), i1 - i0 >= 18 else { continue }
+            guard let q = BarcodeFinder.quantize(Array(ln[i0...i1])) else { continue }
+            guard let vals = BarcodeFinder.code128Values(q.modules) else { continue }
+            let left = Double(lo + st[i0]), right = Double(lo + st[i1] + ln[i1])
+            // vertical extent: follow the wider bars up and down from the band centre
+            var tops = [Int](), bots = [Int]()
+            var x = left
+            let cy = (y0 + y1) / 2
+            for (k, mm) in q.modules.enumerated() {
+                let wpx = Double(mm) * q.module
+                if k % 2 == 0 && mm >= 2 {
+                    let cx = min(W - 1, max(0, Int((x + wpx / 2).rounded())))
+                    var t = cy
+                    while t > 0 && g.pixels[(t - 1) * W + cx] < 128 { t -= 1 }
+                    var b = cy
+                    while b < H - 1 && g.pixels[(b + 1) * W + cx] < 128 { b += 1 }
+                    tops.append(t); bots.append(b + 1)
+                }
+                x += wpx
+            }
+            guard !tops.isEmpty else { continue }
+            let mt = BarcodeFinder.median(tops.map(Double.init)), mb = BarcodeFinder.median(bots.map(Double.init))
+            let tol = 0.04 * (mb - mt) + 2
+            let top = tops.filter { Double($0) >= mt - tol }.min() ?? Int(mt)
+            let bottom = bots.filter { Double($0) <= mb + tol }.max() ?? Int(mb)
+            plans.append(GridFitPlan(left: left, right: right, top: top, bottom: bottom, modules: q.modules,
+                                     module: q.module, text: BarcodeFinder.code128Text(vals)))
+        }
+        return plans
+    }
+
+    /// Redraws planned symbols on the output raster with every module an exact number of dots.
+    @discardableResult
+    public static func applyGridFit(_ out: inout GrayImage, plans: [GridFitPlan], scale s: Double, offsetX ox: Int, offsetY oy: Int) -> Int {
+        let TW = out.width, TH = out.height
+        var n = 0
+        for p in plans {
+            let M = p.modules.reduce(0, +)
+            let xs = p.module * s
+            guard xs > 0.5, M > 0 else { continue }
+            var D = max(1, Int((xs + 0.35).rounded(.down)))
+            if D == 1 && xs >= 1.3 { D = 2 }
+            let L = p.left * s + Double(ox), R = p.right * s + Double(ox)
+            let avail = (R - L) * 1.06 + 4
+            while D > 1 && Double(D * M) > avail { D -= 1 }
+            if abs(Double(D) - xs) / xs > 0.4 { continue }
+            var top = Int((Double(p.top) * s + Double(oy)).rounded())
+            var bot = Int((Double(p.bottom) * s + Double(oy)).rounded())
+            var x = Int(((L + R) / 2 - Double(D * M) / 2).rounded())
+            if x < 0 || x + D * M > TW || top < 0 || bot > TH || bot <= top { continue }
+            let x0c = Int(min(L, Double(x)).rounded(.down)) - 1
+            let x1c = Int(max(R, Double(x + D * M)).rounded(.up)) + 1
+            let xa = max(0, Int(L.rounded(.down))), xb = min(TW, Int(R.rounded(.up)))
+            // resampled bars can reach a row or two past the mapped extent
+            for _ in 0..<3 where top > 0 && out.darkFraction(row: top - 1, from: xa, to: xb) > 0.2 { top -= 1 }
+            for _ in 0..<3 where bot < TH && out.darkFraction(row: bot, from: xa, to: xb) > 0.2 { bot += 1 }
+            out.fill(PixelRect(x0: x0c, y0: top, x1: x1c, y1: bot), value: 255)
+            for (k, mm) in p.modules.enumerated() {
+                let wd = mm * D
+                if k % 2 == 0 { out.fill(PixelRect(x0: x, y0: top, x1: x + wd, y1: bot), value: 0) }
+                x += wd
+            }
+            n += 1
+        }
+        return n
+    }
+}

@@ -1,0 +1,8 @@
+.build/
+build/
+dist/
+out/
+.venv/
+*.zpl
+.DS_Store
+.swiftpm/

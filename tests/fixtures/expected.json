@@ -1,0 +1,149 @@
+{
+  "01_image_letter_dashed.pdf": {
+    "labels": [
+      {
+        "barcodes": [
+          "1Z999AA10123456784",
+          "420627019205"
+        ],
+        "source": "image"
+      }
+    ]
+  },
+  "02_vector_letter_framed.pdf": {
+    "labels": [
+      {
+        "barcodes": [
+          "9400111899223197428490",
+          "420627019205"
+        ],
+        "source": "vector"
+      }
+    ]
+  },
+  "03_vector_letter_unframed_rotated.pdf": {
+    "labels": [
+      {
+        "barcodes": [
+          "1Z999AA10123456784",
+          "420627019205"
+        ],
+        "source": "vector"
+      }
+    ]
+  },
+  "04_two_up.pdf": {
+    "labels": [
+      {
+        "barcodes": [
+          "1Z999AA10123456784"
+        ]
+      },
+      {
+        "barcodes": [
+          "1Z999AA10123456795"
+        ]
+      }
+    ]
+  },
+  "05_two_landscape_stacked.pdf": {
+    "labels": [
+      {
+        "barcodes": [
+          "1Z999AA10123456784"
+        ]
+      },
+      {
+        "barcodes": [
+          "1Z999AA10123456795"
+        ]
+      }
+    ]
+  },
+  "06_page_4x6_vector.pdf": {
+    "labels": [
+      {
+        "barcodes": [
+          "1Z999AA10123456784",
+          "420627019205"
+        ],
+        "source": "page"
+      }
+    ]
+  },
+  "07_page_4x6_raster203.pdf": {
+    "labels": [
+      {
+        "barcodes": [
+          "1Z999AA10123456784",
+          "420627019205"
+        ],
+        "source": "image"
+      }
+    ]
+  },
+  "08_browser_4x6_shrunk.pdf": {
+    "labels": [
+      {
+        "barcodes": [
+          "1Z999AA10123456784",
+          "420627019205"
+        ],
+        "source": "image"
+      }
+    ]
+  },
+  "09_multipage.pdf": {
+    "labels": [
+      {
+        "barcodes": [
+          "9400111899223197428490"
+        ],
+        "page": 2
+      }
+    ]
+  },
+  "10_image_portrait_300.pdf": {
+    "labels": [
+      {
+        "barcodes": [
+          "1Z999AA10123456784",
+          "420627019205"
+        ],
+        "source": "image"
+      }
+    ]
+  },
+  "11_two_up_unframed.pdf": {
+    "labels": [
+      {
+        "barcodes": [
+          "1Z999AA10123456784"
+        ]
+      },
+      {
+        "barcodes": [
+          "1Z999AA10123456795"
+        ]
+      }
+    ]
+  },
+  "12_photo_and_label.pdf": {
+    "labels": [
+      {
+        "barcodes": [
+          "9400111899223197428490"
+        ]
+      }
+    ]
+  },
+  "13_vector_shrunk_4x6.pdf": {
+    "labels": [
+      {
+        "barcodes": [
+          "9400111899223197428490"
+        ]
+      }
+    ]
+  }
+}

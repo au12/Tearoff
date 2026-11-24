@@ -1,0 +1,81 @@
+name: Build & test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  macos:
+    runs-on: macos-15   # Apple Silicon
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Unit tests
+        run: swift test 2>&1 | tail -n 60; exit ${PIPESTATUS[0]}
+
+      - name: Build Tearoff.app
+        run: ./build.sh
+
+      - name: Python test tools
+        run: |
+          python3 -m venv .venv && . .venv/bin/activate
+          pip install -q pillow zxing-cpp reportlab pymupdf
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+
+      - name: Fixture tests (label finding, orientation, barcodes scan at 203 dpi)
+        run: python3 tests/verify.py build/Tearoff.app/Contents/Helpers/tearoff tests/fixtures out/fixtures
+
+      - name: CUPS end-to-end (driver + lp + fake Zebra)
+        run: bash tests/cups_e2e.sh build/Tearoff.app out/cups
+
+      - name: Screenshots
+        continue-on-error: true
+        run: |
+          mkdir -p out/screenshots
+          shoot() {
+            name="$1"; shift
+            rm -f /tmp/tearoff-window-id
+            build/Tearoff.app/Contents/MacOS/Tearoff --demo "$@" &
+            pid=$!
+            for _ in $(seq 1 20); do [ -s /tmp/tearoff-window-id ] && break; sleep 0.5; done
+            sleep 4
+            screencapture -x -o -l "$(cat /tmp/tearoff-window-id)" "out/screenshots/$name.png" || screencapture -x "out/screenshots/$name-full.png"
+            kill $pid; sleep 1
+          }
+          shoot labels tests/fixtures/01_image_letter_dashed.pdf tests/fixtures/04_two_up.pdf
+          shoot printer --pane printer
+          shoot driver --pane driver
+          ls -la out/screenshots
+
+      - name: Package
+        run: |
+          mkdir -p dist/Tearoff
+          ditto build/Tearoff.app dist/Tearoff/Tearoff.app
+          cp install.sh uninstall.sh dist/Tearoff/
+          (cd dist && ditto -c -k --keepParent Tearoff Tearoff.zip)
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Tearoff
+          path: dist/Tearoff.zip
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-output
+          path: out/
+
+      - name: Publish rolling "latest" release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete latest --yes --cleanup-tag 2>/dev/null || true
+          gh release create latest dist/Tearoff.zip --title "Tearoff (latest build)" \
+            --notes "Built from ${GITHUB_SHA::7}. Install: curl -fsSL https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/main/get.sh | bash" \
+            --target "$GITHUB_SHA"
