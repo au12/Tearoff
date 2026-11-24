@@ -126,7 +126,7 @@ public enum LabelExtractor {
         var c = LabelCandidate(kind: .page, rect: r)
         let labelLandscape = options.size.width > options.size.height
         c.quarterTurns = (r.width > r.height) != labelLandscape ? 1 : 0
-        let out = LabelRenderer.render(c, options: options, render: p.renderer)
+        let out = LabelRenderer.render(c, options: options, fit: .contain, render: p.renderer)
         return ExtractedLabel(image: out.image, page: index, kind: "fallback", detail: "No label found — whole page fitted",
                               rect: r, quarterTurns: c.quarterTurns, gridFitted: out.gridFitted,
                               barcodes: out.barcodeTexts, dpi: options.dpi)

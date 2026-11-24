@@ -56,7 +56,7 @@ public enum Driver {
         *PCFileName: "TEAROFF.PPD"
         *Manufacturer: "Zebra"
         *Product: "(Tearoff ZPL)"
-        *ModelName: "Zebra ZPL Label Printer (Tearoff)"
+        *ModelName: "Zebra ZPL Label Printer Tearoff"
         *ShortNickName: "Zebra ZPL (Tearoff)"
         *NickName: "Zebra ZPL Label Printer (Tearoff)"
         *PSVersion: "(3010.000) 0"

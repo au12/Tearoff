@@ -429,10 +429,13 @@ final class AppModel: ObservableObject {
         requestedPane = pane
         if !files.isEmpty { open(files, autoPrint: false) }
         // let CI capture just this window: write its CGWindowID where the screenshot script looks
+        NSApp.activate(ignoringOtherApps: true)
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
-            guard let w = NSApp.windows.first(where: { $0.isVisible && $0.contentView != nil && $0.frame.width > 400 }) else { return }
-            w.setContentSize(NSSize(width: 1120, height: 740))
+            guard let w = NSApp.windows.first(where: { $0.contentView != nil && $0.frame.width > 400 }) else { return }
+            let vf = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1280, height: 800)
+            w.setContentSize(NSSize(width: min(1120, vf.width - 24), height: min(740, vf.height - 24)))
             w.center()
+            w.makeKeyAndOrderFront(nil)
             let path = ProcessInfo.processInfo.environment["TEAROFF_WINDOW_ID_FILE"] ?? "/tmp/tearoff-window-id"
             try? String(w.windowNumber).write(toFile: path, atomically: true, encoding: .utf8)
         }

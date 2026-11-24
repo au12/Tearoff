@@ -40,14 +40,16 @@ jobs:
           shoot() {
             name="$1"; shift
             rm -f /tmp/tearoff-window-id
-            build/Tearoff.app/Contents/MacOS/Tearoff --demo "$@" &
-            pid=$!
-            for _ in $(seq 1 20); do [ -s /tmp/tearoff-window-id ] && break; sleep 0.5; done
+            open -n build/Tearoff.app --args --demo "$@"
+            for _ in $(seq 1 30); do [ -s /tmp/tearoff-window-id ] && break; sleep 0.5; done
             sleep 4
-            screencapture -x -o -l "$(cat /tmp/tearoff-window-id)" "out/screenshots/$name.png" || screencapture -x "out/screenshots/$name-full.png"
-            kill $pid; sleep 1
+            if [ -s /tmp/tearoff-window-id ]; then
+              screencapture -x -o -l "$(cat /tmp/tearoff-window-id)" "out/screenshots/$name.png"
+            fi
+            screencapture -x "out/screenshots/$name-full.png"
+            pkill -x Tearoff; sleep 2
           }
-          shoot labels tests/fixtures/01_image_letter_dashed.pdf tests/fixtures/04_two_up.pdf
+          shoot labels "$PWD/tests/fixtures/01_image_letter_dashed.pdf" "$PWD/tests/fixtures/04_two_up.pdf"
           shoot printer --pane printer
           shoot driver --pane driver
           ls -la out/screenshots

@@ -22,12 +22,26 @@ public struct RenderedLabel {
     public var barcodeTexts: [String]
 }
 
+/// How a found region maps onto the label stock.
+public enum LabelFit {
+    /// The region *is* the label (embedded label image, cut-line frame, label-sized page): fill the stock.
+    case fill
+    /// Unframed content: keep true size when it was drawn at true size, otherwise fit with a small margin.
+    case natural
+    /// Arbitrary content: fit inside the stock with a small margin.
+    case contain
+}
+
 public enum LabelRenderer {
 
     /// Renders a found label to a binary raster of exactly `options.size` at `options.dpi`.
-    public static func render(_ c: LabelCandidate, options: RenderOptions, render: RegionRenderer) -> RenderedLabel {
+    public static func render(_ c: LabelCandidate, options: RenderOptions, fit: LabelFit? = nil, render: RegionRenderer) -> RenderedLabel {
         let (TW, TH) = options.size.dots(dpi: options.dpi)
         let q = ((c.quarterTurns % 4) + 4) % 4
+        let mode = fit ?? (c.kind == .block ? .natural : .fill)
+        var rect = c.rect
+        // a frame is usually a printed cut line: keep it out of the label
+        if c.kind == .frame && rect.width > 20 && rect.height > 20 { rect = rect.insetBy(1.5) }
         var rw: Int, rh: Int
         var exact = false
         if c.kind == .image, let n = c.native {
@@ -36,9 +50,9 @@ public enum LabelRenderer {
             if max(rw, rh) < Int(1.2 * Double(max(TW, TH))) { rw *= 3; rh *= 3 }
         } else {
             let (cw, ch) = q % 2 == 0 ? (TW, TH) : (TH, TW)
-            let s = min(Double(cw) / c.rect.width, Double(ch) / c.rect.height)
-            rw = max(1, Int((c.rect.width * s * 3).rounded()))
-            rh = max(1, Int((c.rect.height * s * 3).rounded()))
+            let s = min(Double(cw) / rect.width, Double(ch) / rect.height)
+            rw = max(1, Int((rect.width * s * 3).rounded()))
+            rh = max(1, Int((rect.height * s * 3).rounded()))
         }
         // keep memory sane for very large embedded images
         let maxPixels = 40_000_000
@@ -47,25 +61,45 @@ public enum LabelRenderer {
             rw = max(1, Int(Double(rw) * f)); rh = max(1, Int(Double(rh) * f))
             exact = false
         }
-        let g = render(c.rect, rw, rh, exact).rotated(quarterTurnsCW: q)
-        return finish(g, options: options)
+        let g = render(rect, rw, rh, exact).rotated(quarterTurnsCW: q)
+        var dest: PixelRect? = nil
+        if mode != .fill {
+            // upright size in points → dots
+            let (pw, ph) = q % 2 == 0 ? (rect.width, rect.height) : (rect.height, rect.width)
+            let natural = Double(options.dpi) / 72
+            let W = Double(TW), H = Double(TH)
+            var k = min(W * 0.96 / pw, H * 0.96 / ph)
+            if mode == .natural {
+                let w0 = pw * natural, h0 = ph * natural
+                if w0 <= W && h0 <= H && (w0 >= 0.8 * W || h0 >= 0.8 * H) { k = natural }   // drawn at true size
+            }
+            let ow = max(1, min(TW, Int((pw * k).rounded()))), oh = max(1, min(TH, Int((ph * k).rounded())))
+            dest = PixelRect(x0: (TW - ow) / 2, y0: (TH - oh) / 2, x1: (TW - ow) / 2 + ow, y1: (TH - oh) / 2 + oh)
+        }
+        return finish(g, options: options, into: dest)
     }
 
-    /// Fits an upright high-resolution raster onto the label, thresholds it and grid-fits barcodes.
-    public static func finish(_ g: GrayImage, options: RenderOptions) -> RenderedLabel {
+    /// Fits an upright high-resolution raster onto the label (or into `dest`), thresholds it and
+    /// grid-fits barcodes.
+    public static func finish(_ g: GrayImage, options: RenderOptions, into dest: PixelRect? = nil) -> RenderedLabel {
         let (TW, TH) = options.size.dots(dpi: options.dpi)
         let gw = g.width, gh = g.height
         guard gw > 0, gh > 0 else { return RenderedLabel(image: GrayImage(width: TW, height: TH), gridFitted: 0, barcodeTexts: []) }
-        let sx = Double(TW) / Double(gw), sy = Double(TH) / Double(gh)
         var ow = TW, oh = TH
-        if abs(sx / sy - 1) >= 0.04 {
-            let s = min(sx, sy)
-            ow = max(1, min(TW, Int((Double(gw) * s).rounded())))
-            oh = max(1, min(TH, Int((Double(gh) * s).rounded())))
+        var ox = 0, oy = 0
+        if let d = dest {
+            ow = d.width; oh = d.height; ox = d.x0; oy = d.y0
+        } else {
+            let sx = Double(TW) / Double(gw), sy = Double(TH) / Double(gh)
+            if abs(sx / sy - 1) >= 0.04 {
+                let s = min(sx, sy)
+                ow = max(1, min(TW, Int((Double(gw) * s).rounded())))
+                oh = max(1, min(TH, Int((Double(gh) * s).rounded())))
+            }
+            ox = (TW - ow) / 2; oy = (TH - oh) / 2
         }
         let small = g.resampled(width: ow, height: oh)
         var out = GrayImage(width: TW, height: TH)
-        let ox = (TW - ow) / 2, oy = (TH - oh) / 2
         out.paste(small, x: ox, y: oy)
         var bits = out.thresholded(options.threshold)
 
