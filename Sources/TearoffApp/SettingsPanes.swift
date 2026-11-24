@@ -126,6 +126,8 @@ struct PrinterPane: View {
                 .pickerStyle(.segmented)
                 Toggle("Snap barcodes to the printer’s dot grid", isOn: $model.settings.gridFit)
                     .help("Redraws verified Code 128 barcodes so every bar is a whole number of dots")
+                Toggle("Also print other barcodes and QR codes", isOn: $model.settings.extraCodes)
+                    .help("A return-slip barcode, a drop-off QR code or an order barcode outside the shipping label prints on a label of its own, as large as it fits, with the text printed beside it")
                 Stepper(value: $model.settings.topOffset, in: -120...120, step: 4) {
                     LabeledContent("Shift down", value: "\(model.settings.topOffset) dots")
                 }
@@ -149,6 +151,10 @@ struct PrinterPane: View {
             if case .network(let h, let port)? = p { hostField = port == 9100 ? h : "\(h):\(port)" }
         }
         .onChange(of: model.settings.renderOptions) { _ in model.reprocessAll() }
+        .onChange(of: model.settings.extraCodes) { _ in
+            model.reprocessAll()
+            model.scheduleQueueSync()
+        }
         .onChange(of: model.settings.speed) { _ in model.scheduleQueueSync() }
         .onChange(of: model.settings.darkness == nil) { _ in model.scheduleQueueSync() }
     }

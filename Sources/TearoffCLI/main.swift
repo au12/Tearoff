@@ -20,6 +20,7 @@ tearoff \(version) — crisp Zebra labels from PDFs
   tearoff bench [FILE…]      time the pipeline (default: the bundled test PDFs) [--runs N]
 
 Render options: --dpi 203|300|600  --size 4x6  --no-gridfit  --whole-pages  --weight light|normal|bold
+                --no-extras (skip barcodes/QR codes found outside the label)
 Defaults come from the Tearoff app's settings.
 """
 
@@ -59,6 +60,8 @@ while i < args.count {
         guard let s = LabelSize(string: value()) else { fail("bad --size (use e.g. 4x6)") }
         settings.labelWidth = s.width; settings.labelHeight = s.height
     case "--no-gridfit": settings.gridFit = false
+    case "--no-extras": settings.extraCodes = false
+    case "--extras": settings.extraCodes = true
     case "--whole-pages": wholePages = true
     case "--weight":
         switch value().lowercased() {
@@ -74,7 +77,8 @@ while i < args.count {
     i += 1
 }
 
-let extractOptions = ExtractOptions(render: settings.renderOptions, fallbackToPages: true, wholePages: wholePages)
+let extractOptions = ExtractOptions(render: settings.renderOptions, fallbackToPages: true, wholePages: wholePages,
+                                    extraCodes: settings.extraCodes)
 
 func labels(_ path: String) -> [ExtractedLabel] {
     let trace = PerfTrace()

@@ -104,7 +104,7 @@ final class AppModel: ObservableObject {
     /// Opens files; prints right away when asked to (or when Auto-print is on).
     func open(_ urls: [URL], autoPrint: Bool? = nil, source: String = "app") {
         for url in urls {
-            let opts = ExtractOptions(render: renderOptions, fallbackToPages: true)
+            let opts = ExtractOptions(render: renderOptions, fallbackToPages: true, extraCodes: settings.extraCodes)
             let shouldPrint = autoPrint ?? settings.autoPrintOnOpen
             let dpi = settings.dpi
             working += 1
@@ -337,7 +337,8 @@ final class AppModel: ObservableObject {
         }
         let req = Driver.InstallRequest(queueName: queueName, displayName: displayName, deviceURI: uri,
                                         dpi: settings.dpi, label: settings.labelSize,
-                                        darkness: settings.darkness, speed: settings.speed, convertQueues: convert)
+                                        darkness: settings.darkness, speed: settings.speed,
+                                        extraCodes: settings.extraCodes, convertQueues: convert)
         let trace = PerfTrace()
         do {
             // driver files from the installer package: just add the printer (usually no password)
@@ -407,7 +408,9 @@ final class AppModel: ObservableObject {
         let s = settings
         let qs = tearoffQueues
         net.async {
-            for q in qs { Driver.setDefaults(queue: q, dpi: s.dpi, label: s.labelSize, darkness: s.darkness, speed: s.speed) }
+            for q in qs {
+                Driver.setDefaults(queue: q, dpi: s.dpi, label: s.labelSize, darkness: s.darkness, speed: s.speed, extras: s.extraCodes)
+            }
         }
     }
 
@@ -423,7 +426,7 @@ final class AppModel: ObservableObject {
     }
 
     func downloaded(_ url: URL) {
-        let opts = ExtractOptions(render: renderOptions, fallbackToPages: false)
+        let opts = ExtractOptions(render: renderOptions, fallbackToPages: false, extraCodes: settings.extraCodes)
         work.async { [weak self] in
             let trace = PerfTrace()
             let found = (try? LabelExtractor.extract(url: url, options: opts, trace: trace)) ?? []
@@ -431,7 +434,8 @@ final class AppModel: ObservableObject {
                 "file": url.lastPathComponent, "labels": found.count, "kinds": found.map { $0.kind },
             ]))
             let labels = found
-            guard !labels.isEmpty, labels.contains(where: { !$0.barcodes.isEmpty }) else { return }
+            // only shipping labels count: a downloaded invoice or ticket with a barcode is not a label
+            guard labels.contains(where: { !$0.isExtraCode && !$0.barcodes.isEmpty }) else { return }
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 var doc = LabelDocument(url: url, name: url.lastPathComponent, labels: labels, selected: Set(labels.map { $0.id }))

@@ -231,7 +231,13 @@ struct DocumentSection: View {
         let n = doc.labels.count
         if n == 0 { return "no label" }
         let fallback = doc.labels.allSatisfy { $0.kind == "fallback" }
-        return fallback ? "no label found — whole page" : "\(n) label\(n == 1 ? "" : "s")"
+        if fallback { return "no label found — whole page" }
+        let codes = doc.labels.filter { $0.isExtraCode }.count
+        let labels = n - codes
+        var parts: [String] = []
+        if labels > 0 { parts.append("\(labels) label\(labels == 1 ? "" : "s")") }
+        if codes > 0 { parts.append("\(codes) other code\(codes == 1 ? "" : "s")") }
+        return parts.joined(separator: " + ")
     }
 }
 
@@ -298,6 +304,8 @@ struct LabelTile: View {
         if let t = label.tracking {
             return [label.carrier, t].compactMap { $0 }.joined(separator: " · ")
         }
+        if label.kind == "qr" { return "QR code" }
+        if label.kind == "barcode" { return label.barcodes.first.map { "Barcode \($0)" } ?? "Barcode" }
         return label.kind == "fallback" ? "Whole page" : "Label \(label.page > 1 ? "on page \(label.page)" : "")"
     }
 

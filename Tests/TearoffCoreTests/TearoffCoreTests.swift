@@ -257,3 +257,107 @@ final class StatusTests: XCTestCase {
         XCTAssertEqual(Carrier.name(for: ["9400111899223197428490"]), "USPS")
     }
 }
+
+final class ExtraCodeTests: XCTestCase {
+    /// Version 1-M QR code for "TEAROFF".
+    static let qr21 = [
+        "#######.#..##.#######", "#.....#.##..#.#.....#", "#.###.#..#.#..#.###.#", "#.###.#.##..#.#.###.#",
+        "#.###.#...##..#.###.#", "#.....#..#.##.#.....#", "#######.#.#.#.#######", "........#####........",
+        "#.##.###.#.##.#..#.##", "..#....##..####...###", ".#.#######.#......###", "#.####.#...#..###.###",
+        "####..##.##.#..#.#...", "........#.##..#..####", "#######.#####..#.##.#", "#.....#.#......##.###",
+        "#.###.#..#..#####...#", "#.###.#.##.#..#.#..#.", "#.###.#.##..#.##.##..", "#.....#..##..#.##.#..",
+        "#######.##...#.#...#.",
+    ]
+
+    func drawQR(_ img: inout GrayImage, x: Int, y: Int, module: Int, keep: (Int, Int) -> Bool = { _, _ in true }) {
+        for (r, row) in Self.qr21.enumerated() {
+            for (c, ch) in row.enumerated() where ch == "#" && keep(r, c) {
+                img.fill(PixelRect(x0: x + c * module, y0: y + r * module, x1: x + (c + 1) * module, y1: y + (r + 1) * module), value: 0)
+            }
+        }
+    }
+
+    func testQRFinderLocatesTheSymbolInEveryRotation() {
+        var img = GrayImage(width: 640, height: 520)
+        drawQR(&img, x: 150, y: 100, module: 9)       // 189 px symbol
+        for k in 0..<4 {
+            let found = QRFinder.find(in: img.rotated(quarterTurnsCW: k), ppi: 300)
+            XCTAssertEqual(found.count, 1, "rotation \(k)")
+            XCTAssertEqual(found.first?.dimension, 21, "rotation \(k)")
+            XCTAssertEqual(found.first?.module ?? 0, 9, accuracy: 1, "rotation \(k)")
+        }
+        let r = QRFinder.find(in: img, ppi: 300)[0].rect
+        XCTAssertEqual(Double(r.x0), 150, accuracy: 4)
+        XCTAssertEqual(Double(r.y0), 100, accuracy: 4)
+        XCTAssertEqual(Double(r.x1), 339, accuracy: 4)
+        XCTAssertEqual(Double(r.y1), 289, accuracy: 4)
+    }
+
+    func testThreeSquaresWithoutTimingPatternsAreNotAQRCode() {
+        var img = GrayImage(width: 640, height: 520)
+        drawQR(&img, x: 150, y: 100, module: 9) { r, c in (r < 7 && c < 7) || (r < 7 && c >= 14) || (r >= 14 && c < 7) }
+        XCTAssertTrue(QRFinder.find(in: img, ppi: 300).isEmpty)
+    }
+
+    func testThinnedBarsAtThreeAndAHalfPixelsStillQuantize() {
+        // 0.85 pt modules seen at 300 dpi are 3.54 px; thresholding thins every bar by ~1 px
+        let modules = code128Modules("ORDER-5521-B")
+        let runs = modules.enumerated().map { k, m in
+            Int((Double(m) * 3.54 + (k % 2 == 0 ? -0.6 : 0.6)).rounded())
+        }
+        let q = BarcodeFinder.quantize(runs)
+        XCTAssertEqual(q?.modules ?? [], modules)
+        XCTAssertNotNil(BarcodeFinder.code128Values(q?.modules ?? []))
+    }
+
+    /// A return slip on a 300 dpi page: the value printed centred above the bars is part of the
+    /// code; a dotted rule above it and a paragraph below are not.
+    func testCodeFinderTakesTheDigitsButNotTheRuleOrParagraph() {
+        let ppi = 300.0, s = ppi / 72
+        var page = GrayImage(width: 2550, height: 1500)
+        let modules = code128Modules("RmaSLIP42x")
+        let bw = modules.reduce(0, +) * 4
+        let bx = (2550 - bw) / 2
+        drawBarcode(&page, modules: modules, x: bx, y: 700, module: 4, height: 200)
+        // the value, as letter-sized strokes centred over the bars, 10 px above them
+        var tx = 1275 - 150
+        var k = 0
+        while tx < 1275 + 150 {
+            let w = [10, 16, 12][k % 3]
+            page.fill(PixelRect(x0: tx, y0: 664, x1: tx + w, y1: 690), value: 0)
+            tx += w + 9; k += 1
+        }
+        // a dotted rule across the page just above, and a paragraph line well below
+        var dx = 200
+        while dx < 2350 { page.fill(PixelRect(x0: dx, y0: 641, x1: dx + 3, y1: 644), value: 0); dx += 9 }
+        page.fill(PixelRect(x0: 150, y0: 990, x1: 2400, y1: 1018), value: 0)
+
+        let codes = BarcodeFinder.find(in: page, ppi: ppi)
+        XCTAssertEqual(codes.compactMap { $0.text }, ["RmaSLIP42x"])
+        let found = CodeFinder.find(big: page, scale: s, linear: codes, labels: [])
+        XCTAssertEqual(found.count, 1)
+        guard let c = found.first else { return }
+        XCTAssertEqual(c.kind, .code)
+        XCTAssertEqual(c.quarterTurns, 0)
+        XCTAssertEqual(c.rect.y0 * s, 664 - s, accuracy: 6)       // the digits, plus the 1 pt pad
+        XCTAssertEqual(c.rect.y1 * s, 900 + s, accuracy: 6)       // the bars' foot
+        XCTAssertEqual(c.rect.x0 * s, Double(bx) - s, accuracy: 6)
+        XCTAssertGreaterThan(c.quietZone.x, 9)                    // 10 modules of 0.96 pt
+
+        // inside a label it is part of that label, not an extra
+        let label = PageRect(x0: 0, y0: 0, x1: 2550 / s, y1: 1000 / s)
+        XCTAssertTrue(CodeFinder.find(big: page, scale: s, linear: codes, labels: [label]).isEmpty)
+
+        // printed on its own label: lies on its side, fills the length, still scans as the same code
+        let out = LabelRenderer.renderCode(c, options: RenderOptions(), render: renderer(for: page, dpi: ppi))
+        XCTAssertEqual(out.image.width, 812)
+        XCTAssertEqual(out.image.height, 1218)
+        XCTAssertEqual(out.quarterTurns, 3)
+        XCTAssertEqual(out.gridFitted, 1)
+        XCTAssertTrue(out.barcodeTexts.contains("RmaSLIP42x"))
+        let upright = out.image.rotated(quarterTurnsCW: 1)
+        let again = BarcodeFinder.find(in: upright, ppi: 300)      // 7-dot modules: wide bars by label standards
+        XCTAssertEqual(again.compactMap { $0.text }, ["RmaSLIP42x"])
+        if let b = again.first { XCTAssertGreaterThan(Double(b.rect.width), 0.75 * 1218) }
+    }
+}

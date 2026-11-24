@@ -24,7 +24,7 @@ public struct ExtractedLabel: Identifiable {
     public let id = UUID()
     public var image: GrayImage
     public var page: Int
-    /// image | frame | block | page | fallback
+    /// image | frame | block | page | fallback, or barcode | qr for a code found outside the labels
     public var kind: String
     public var detail: String
     public var rect: PageRect
@@ -33,8 +33,10 @@ public struct ExtractedLabel: Identifiable {
     public var barcodes: [String]
     public var dpi: Int
 
-    public var carrier: String? { Carrier.name(for: barcodes) }
-    public var tracking: String? { Carrier.trackingNumber(in: barcodes) }
+    public var carrier: String? { isExtraCode ? nil : Carrier.name(for: barcodes) }
+    public var tracking: String? { isExtraCode ? nil : Carrier.trackingNumber(in: barcodes) }
+    /// A barcode or QR code that was printed outside the shipping label (slip, drop-off code…).
+    public var isExtraCode: Bool { kind == "barcode" || kind == "qr" }
 
     /// Rotates the finished label 180° (manual fix-up from the UI).
     public mutating func flip() {
@@ -49,8 +51,12 @@ public struct ExtractOptions {
     public var fallbackToPages: Bool
     /// Skip detection and always print whole pages.
     public var wholePages: Bool
-    public init(render: RenderOptions = RenderOptions(), fallbackToPages: Bool = true, wholePages: Bool = false) {
+    /// Also print the barcodes and QR codes found outside the labels, each on a label of its own.
+    public var extraCodes: Bool
+    public init(render: RenderOptions = RenderOptions(), fallbackToPages: Bool = true, wholePages: Bool = false,
+                extraCodes: Bool = true) {
         self.render = render; self.fallbackToPages = fallbackToPages; self.wholePages = wholePages
+        self.extraCodes = extraCodes
     }
 }
 
@@ -73,21 +79,38 @@ public enum LabelExtractor {
         return extract(pages: docPages, options: options, trace: trace)
     }
 
+    /// Most extra codes printed from one document.
+    public static let maxExtraCodes = 8
+
     public static func extract(pages: [PageSource], options: ExtractOptions, trace: PerfTrace? = nil) -> [ExtractedLabel] {
         var out: [ExtractedLabel] = []
+        var extras: [ExtractedLabel] = []
         if !options.wholePages {
             for (i, p) in pages.enumerated() {
                 let content = trace.measureOrRun("extract.content_scan") { p.content() }
                 trace?.count("embedded_images", content.images.count)
-                let found = LabelFinder.find(page: content, label: options.render.size, trace: trace, render: p.renderer)
-                for c in found {
+                let found = LabelFinder.analyze(page: content, label: options.render.size, extras: options.extraCodes,
+                                                trace: trace, render: p.renderer)
+                for c in found.labels {
                     let r = LabelRenderer.render(c, options: options.render, trace: trace, render: p.renderer)
                     out.append(ExtractedLabel(image: r.image, page: i + 1, kind: c.kind.rawValue, detail: describe(c),
                                               rect: c.rect, quarterTurns: c.quarterTurns, gridFitted: r.gridFitted,
                                               barcodes: unique(r.barcodeTexts + c.texts), dpi: options.render.dpi))
                 }
+                for c in found.codes where extras.count < maxExtraCodes {
+                    // the same code repeated (a second copy of the slip, page 2 of a receipt): print it once
+                    if let t = c.texts.first, extras.contains(where: { $0.barcodes.contains(t) }) { continue }
+                    let r = LabelRenderer.renderCode(c, options: options.render, trace: trace, render: p.renderer)
+                    extras.append(ExtractedLabel(image: r.image, page: i + 1, kind: c.symbology == "QR code" ? "qr" : "barcode",
+                                                 detail: describe(c), rect: c.rect, quarterTurns: r.quarterTurns ?? c.quarterTurns,
+                                                 gridFitted: r.gridFitted, barcodes: unique(c.texts + r.barcodeTexts),
+                                                 dpi: options.render.dpi))
+                }
             }
         }
+        // shipping labels first, then the extra codes
+        out += extras
+        trace?.set("extra_labels", extras.count)
         if out.isEmpty && (options.fallbackToPages || options.wholePages) {
             for (i, p) in pages.enumerated() {
                 if let l = trace.measureOrRun("extract.whole_page", { wholePage(p, index: i + 1, options: options.render) }) {
@@ -109,6 +132,10 @@ public enum LabelExtractor {
         case .frame: return "Vector label inside a cut line"
         case .block: return "Vector label (no frame)"
         case .page: return "Whole page"
+        case .code:
+            if c.symbology == "QR code" { return "QR code found outside the label" }
+            if let t = c.texts.first { return "Barcode “\(t)” found outside the label" }
+            return "Barcode found outside the label"
         }
     }
 

@@ -9,4 +9,12 @@ ROOT=/Library/Printers/Tearoff
 for d in /Library/Logs/Tearoff /Users/Shared/Tearoff; do
   /bin/mkdir -p "$d" && /bin/chmod 1777 "$d"
 done
+# Printers already using Tearoff get the new PPD, so new Print-dialog options appear.
+# lpadmin carries each printer's current defaults (stock, darkness, speed…) over to it.
+for ppd in /etc/cups/ppd/*.ppd; do
+  [ -f "$ppd" ] || continue
+  /usr/bin/grep -q "Tearoff" "$ppd" 2>/dev/null || continue
+  queue=$(/usr/bin/basename "$ppd" .ppd)
+  /usr/sbin/lpadmin -p "$queue" -P "$ROOT/Tearoff.ppd" 2>/dev/null || true
+done
 exit 0

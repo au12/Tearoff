@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Runs `tearoff extract --json` on every fixture and checks: label count, exact printer size,
-upright orientation (every expected barcode reads left-to-right) and that every expected
-barcode decodes from the 203 dpi output.
+orientation (every expected barcode reads left-to-right, or bottom-to-top for an extra code laid
+on its side), the kind of each output, and that every expected code decodes from the 203 dpi output.
 
     python3 tests/verify.py build/Tearoff.app/Contents/Helpers/tearoff tests/fixtures out/
 """
@@ -38,12 +38,15 @@ def main():
                 problems.append(f"#{i + 1} is {im.size}, expected 812x1218")
             if "page" in e and lab["page"] != e["page"]:
                 problems.append(f"#{i + 1} from page {lab['page']}, expected {e['page']}")
+            if "kind" in e and lab["kind"] != e["kind"]:
+                problems.append(f"#{i + 1} is a {lab['kind']}, expected {e['kind']}")
+            want = e.get("orientation", 0)
             found = {b.text: b.orientation for b in zxingcpp.read_barcodes(im)}
             for code in e["barcodes"]:
                 if code not in found:
-                    problems.append(f"#{i + 1} barcode {code} does not scan")
-                elif found[code] != 0:
-                    problems.append(f"#{i + 1} barcode {code} reads at {found[code]} deg (label not upright)")
+                    problems.append(f"#{i + 1} code {code} does not scan")
+                elif found[code] != want:
+                    problems.append(f"#{i + 1} code {code} reads at {found[code]} deg, expected {want}")
         ms = max([l.get("ms", 0) for l in labels] or [0])
         if problems:
             failures += 1

@@ -18,6 +18,10 @@ snapped to the printer's dot grid. That includes labels sitting on a letter-size
   - **Vector labels**, framed or unframed, with solid or dashed cut lines, upright or sideways, are cut out of the page.
     Tearoff never needs a separate image for them.
   - **Two-up sheets** become two labels. **4×6 pages** print 1:1. Pages a browser shrank onto 4×6 paper are scaled back up from the original vector or image data, so nothing goes soft.
+- **Prints the other codes too.** A barcode or QR code outside the shipping label, such as Amazon's *Return Authorization Slip*,
+  a drop-off QR code or an order barcode, prints on a label of its own after the shipping label. Each one includes the text
+  printed beside it, is scaled as large as the stock allows, and lies on its side when that makes it bigger. Turn it off under
+  *Printer → Also print other barcodes and QR codes*, in the Print dialog's *Printer Features*, or with `--no-extras`.
 - **Turns labels upright** by reading the Code 128 start/stop patterns. This works for raster labels with no text layer.
 - **Grid-fit barcodes.** Every Code 128 symbol is decoded and its checksum verified, then redrawn so each bar and space is a
   whole number of printer dots (e.g. 16-mil modules → exactly 3 dots at 203 dpi). A barcode whose checksum doesn't verify is
@@ -87,6 +91,7 @@ Building from source: `./install.sh` (Xcode or the Command Line Tools) builds th
   tearoff print return-label.pdf                 # uses the printer chosen in the app
   tearoff print label.pdf --printer 10.0.10.50 --copies 2
   tearoff extract label.pdf --out labels/        # PNGs at printer resolution
+  tearoff print return.pdf --no-extras           # just the shipping label
   tearoff zpl label.pdf > label.zpl
   tearoff status --printer 10.0.10.50
   tearoff discover
@@ -107,7 +112,13 @@ For each page, Tearoff:
 5. Orients each label from the Code 128 reading direction (or the PDF's text direction), renders it upright at 3× and area-averages
    down to the printer's dots. Embedded images are read 1:1 from their own pixels. Then it thresholds at 50% coverage and grid-fits
    verified Code 128 symbols.
-6. Encodes the label as a single `^GFA` field using Zebra's compressed ASCII. That's about 35 KB per 4×6 label instead of about 250 KB.
+6. Looks for codes *outside* those labels. 1D barcodes come from step 3. QR codes are located from their three finder patterns,
+   then confirmed by the alternating timing patterns between them, so bullseyes, MaxiCode and logos don't count. Each code then
+   grows across its width to take in narrow, centred lines of text close by (the human-readable digits, a return code). It stops
+   at rules, paragraphs, tables and big gaps. The code and its text print on their own label, as large as they fit with a
+   quiet zone. Barcodes are grid-fitted upright before the label is turned, so the turn can't blur them. One document prints at
+   most eight extra codes, and a code that repeats prints once.
+7. Encodes each label as a single `^GFA` field using Zebra's compressed ASCII. That's about 35 KB per 4×6 label instead of about 250 KB.
 
 All of this is pure Swift in `Sources/TearoffCore`, with no Vision or other ML. The same code runs in the app, the CLI and the
 sandboxed CUPS filter.

@@ -51,6 +51,7 @@ func run() -> Int32 {
     }
     let gridFit = (opts["TearoffGridFit"] ?? "True").lowercased() != "false"
     let wholePages = opts["TearoffMode"] == "Page"
+    let extraCodes = (opts["TearoffExtras"] ?? "True").lowercased() != "false"
     let darkness = opts["Darkness"].flatMap { Int($0) }
     let speed = opts["PrintSpeed"].flatMap { Int($0) }
 
@@ -77,7 +78,8 @@ func run() -> Int32 {
     let render = RenderOptions(dpi: dpi, size: stock, gridFit: gridFit, threshold: threshold)
     let labels: [ExtractedLabel]
     do {
-        labels = try LabelExtractor.extract(url: input, options: ExtractOptions(render: render, fallbackToPages: true, wholePages: wholePages),
+        labels = try LabelExtractor.extract(url: input, options: ExtractOptions(render: render, fallbackToPages: true, wholePages: wholePages,
+                                                                                extraCodes: extraCodes),
                                             trace: trace)
     } catch {
         emit("ERROR: \(error.localizedDescription)")

@@ -15,6 +15,8 @@ import pymupdf
 from PIL import Image
 from reportlab.graphics import renderPDF
 from reportlab.graphics.barcode import code128, createBarcodeDrawing
+from reportlab.graphics.barcode.qr import QrCodeWidget
+from reportlab.graphics.shapes import Drawing
 from reportlab.lib.utils import ImageReader
 from reportlab.pdfgen import canvas
 
@@ -26,6 +28,11 @@ LETTER = (8.5 * IN, 11 * IN)
 UPS_TRACK = "1Z999AA10123456784"
 POSTAL = "420627019205"
 USPS_TRACK = "9400111899223197428490"
+SLIP = "RmaSLIP42x"
+QR_RETURN = "https://www.example.com/returns/qr/R7XK2QP9"
+# extra codes print on their own label, best fit; wide ones lie on their side (read bottom to top)
+SLIP_EXTRA = {"barcodes": [SLIP], "kind": "barcode", "orientation": -90}
+RECEIPT_EXTRA = {"barcodes": ["RECEIPT0001"], "kind": "barcode", "orientation": -90}
 
 
 # ---------------------------------------------------------------- label art
@@ -142,17 +149,32 @@ def logo_image():
     return im
 
 
-def code128_image(value, module=3, height=120):
-    """Raster Code 128 (as web pages embed for slips/receipts)."""
-    doc = pymupdf.open()
+def code128_image(value, module=3, hri_above=False):
+    """Raster Code 128 (as web pages embed for slips/receipts). Amazon's return slip prints the
+    value above the bars in a serif face, inside the same image."""
     buf = io.BytesIO()
     c = canvas.Canvas(buf, pagesize=(400, 100))
     bc = code128.Code128(value, barWidth=1, barHeight=60, humanReadable=False, quiet=True)
-    bc.drawOn(c, 0, 20)
+    bc.drawOn(c, 0, 0)
+    top = 60
+    if hri_above:
+        c.setFont("Times-Roman", 11)
+        c.drawCentredString(bc.width / 2, 64, value)
+        top = 78
     c.showPage(); c.save()
     doc = pymupdf.open(stream=buf.getvalue(), filetype="pdf")
-    pix = doc[0].get_pixmap(dpi=72 * module, colorspace="gray", clip=pymupdf.Rect(0, 20, bc.width, 80))
+    pix = doc[0].get_pixmap(dpi=72 * module, colorspace="gray", clip=pymupdf.Rect(0, 100 - top, bc.width, 100))
     return Image.frombytes("L", (pix.width, pix.height), pix.samples).convert("RGB")
+
+
+def draw_qr(c, value, x, y, size):
+    """Vector QR code with its top-left corner at (x, y) in reportlab coordinates (origin bottom-left)."""
+    w = QrCodeWidget(value, barBorder=0)
+    b = w.getBounds()
+    s = size / (b[2] - b[0])
+    d = Drawing(size, size, transform=[s, 0, 0, s, 0, 0])
+    d.add(w)
+    renderPDF.draw(d, c, x, y - size)
 
 
 # ---------------------------------------------------------------- fixtures
@@ -173,11 +195,12 @@ def fx_image_letter_dashed(path):
     c.drawImage(img_reader(im), x, y, w, h)
     c.setFont("Helvetica-Bold", 11); c.drawString(36, H - 470, "Return Authorization Slip")
     c.setFont("Helvetica", 9); c.drawString(36, H - 488, "Place this barcode inside your return package.")
-    c.drawImage(img_reader(code128_image("RMASLIP42")), 168, H - 567, 227.5, 65.8)
+    c.saveState(); c.setDash(1, 2); c.setStrokeColorRGB(0.6, 0.6, 0.6); c.line(48, H - 494, 515, H - 494); c.restoreState()
+    c.drawImage(img_reader(code128_image(SLIP, hri_above=True)), 168, H - 567, 227.5, 65.8)
     c.setFont("Helvetica-Bold", 9); c.drawString(40, H - 600, "Item Descriptions")
     c.setFont("Helvetica", 9); c.drawString(40, H - 616, "Digital Watch | 50M WR | Stopwatch | Countdown Timer | LED Backlight")
     c.showPage(); c.save()
-    return {"labels": [{"barcodes": [UPS_TRACK, POSTAL], "source": "image"}]}
+    return {"labels": [{"barcodes": [UPS_TRACK, POSTAL], "source": "image"}, SLIP_EXTRA]}
 
 
 def fx_vector_letter_framed(path):
@@ -193,7 +216,7 @@ def fx_vector_letter_framed(path):
                   ["Customer receipt — keep for your records."])
     code128.Code128("RECEIPT0001", barWidth=0.9, barHeight=28, humanReadable=True).drawOn(c, 0.5 * IN, y - 40)
     c.showPage(); c.save()
-    return {"labels": [{"barcodes": [USPS_TRACK, POSTAL], "source": "vector"}]}
+    return {"labels": [{"barcodes": [USPS_TRACK, POSTAL], "source": "vector"}, RECEIPT_EXTRA]}
 
 
 def fx_vector_letter_unframed_rotated(path):
@@ -267,7 +290,7 @@ def fx_browser_4x6_shrunk(path, letter_pdf):
     s = (4 * IN - 2 * m) / LETTER[0]
     page.show_pdf_page(pymupdf.Rect(m, m, m + LETTER[0] * s, m + LETTER[1] * s), src, 0)
     dst.save(path)
-    return {"labels": [{"barcodes": [UPS_TRACK, POSTAL], "source": "image"}]}
+    return {"labels": [{"barcodes": [UPS_TRACK, POSTAL], "source": "image"}, SLIP_EXTRA]}
 
 
 def fx_multipage(path):
@@ -323,7 +346,48 @@ def fx_photo_and_label(path):
 
 def fx_vector_shrunk_4x6(path, letter_pdf):
     """A vector letter page printed onto 4x6 paper by a browser (label ends up ~45% size)."""
-    return fx_browser_4x6_shrunk(path, letter_pdf) and {"labels": [{"barcodes": [USPS_TRACK]}]}
+    return fx_browser_4x6_shrunk(path, letter_pdf) and {"labels": [{"barcodes": [USPS_TRACK]}, RECEIPT_EXTRA]}
+
+
+def fx_qr_return_no_label(path):
+    """Label-free return (Amazon/UPS QR drop-off): no shipping label, just a QR code and its return code."""
+    c = canvas.Canvas(path, pagesize=LETTER)
+    W, H = LETTER
+    c.drawImage(img_reader(logo_image()), 36, H - 70, 120, 34.7)
+    c.setFont("Helvetica-Bold", 14); c.drawString(36, H - 104, "Your return QR code")
+    paragraph(c, 36, H - 124, ["No box or label needed. Show this QR code at the drop-off location and",
+                               "the store will pack and ship the item for you."])
+    size = 1.6 * IN
+    draw_qr(c, QR_RETURN, (W - size) / 2, H - 170, size)
+    c.setFont("Helvetica-Bold", 11); c.drawCentredString(W / 2, H - 170 - size - 16, "R7XK-2QP9")
+    paragraph(c, 36, H - 170 - size - 52, ["Drop off by Feb 1, 2027. You can also show this code on your phone.",
+                                           "Return reason: arrived damaged | Refund: original payment method"])
+    c.showPage(); c.save()
+    return {"labels": [{"barcodes": [QR_RETURN], "kind": "qr", "orientation": 0}]}
+
+
+def fx_label_with_side_codes(path):
+    """A framed label plus, beside it, a QR code with a caption and a sideways order barcode with its
+    digits: each extra code prints on its own label after the shipping label."""
+    c = canvas.Canvas(path, pagesize=LETTER)
+    W, H = LETTER
+    c.saveState(); c.translate(0.5 * IN, H - 0.5 * IN - 6 * IN)
+    draw_label(c, carrier="usps", tracking=USPS_TRACK)
+    c.restoreState()
+    size = 1.25 * IN
+    x = 5.1 * IN
+    c.setFont("Helvetica-Bold", 11); c.drawString(x, H - 0.75 * IN, "Drop-off code")
+    draw_qr(c, QR_RETURN, x, H - 1.0 * IN, size)
+    c.setFont("Helvetica", 8); c.drawCentredString(x + size / 2, H - 1.0 * IN - size - 11, "SCAN AT DROP-OFF")
+    # order barcode turned on its side (reads bottom to top), digits beside it
+    c.saveState(); c.translate(x + 1.05 * IN, H - 6.2 * IN); c.rotate(90)
+    code128.Code128("ORDER-5521-B", barWidth=0.85, barHeight=34, humanReadable=True).drawOn(c, 0, 0)
+    c.restoreState()
+    paragraph(c, 0.5 * IN, H - 7.0 * IN, ["Keep the order barcode with your records."])
+    c.showPage(); c.save()
+    return {"labels": [{"barcodes": [USPS_TRACK]},
+                       {"barcodes": [QR_RETURN], "kind": "qr", "orientation": 0},
+                       {"barcodes": ["ORDER-5521-B"], "kind": "barcode", "orientation": -90}]}
 
 
 def main():
@@ -341,6 +405,8 @@ def main():
         ("10_image_portrait_300.pdf", fx_image_portrait_300),
         ("11_two_up_unframed.pdf", fx_two_up_unframed),
         ("12_photo_and_label.pdf", fx_photo_and_label),
+        ("14_qr_return_no_label.pdf", fx_qr_return_no_label),
+        ("15_label_with_side_codes.pdf", fx_label_with_side_codes),
     ]
     for name, fn in fx:
         expected[name] = fn(os.path.join(OUT, name))

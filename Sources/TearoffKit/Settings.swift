@@ -13,6 +13,8 @@ public struct TearoffSettings: Codable, Equatable {
     public var topOffset: Int = 0
     public var leftOffset: Int = 0
     public var gridFit: Bool = true
+    /// Also print barcodes and QR codes found outside the label, each on a label of its own.
+    public var extraCodes: Bool = true
     public var threshold: Int = 128
     public var autoPrintOnOpen: Bool = false
     public var watchDownloads: Bool = false
@@ -23,7 +25,7 @@ public struct TearoffSettings: Codable, Equatable {
 
     enum CodingKeys: String, CodingKey {
         case printer, printerName, dpi, labelWidth, labelHeight, darkness, speed, topOffset, leftOffset
-        case gridFit, threshold, autoPrintOnOpen, watchDownloads, watchAutoPrint, installedQueue
+        case gridFit, extraCodes, threshold, autoPrintOnOpen, watchDownloads, watchAutoPrint, installedQueue
     }
 
     // Tolerant decoding: settings written by older/newer builds never fail to load.
@@ -39,6 +41,7 @@ public struct TearoffSettings: Codable, Equatable {
         topOffset = (try? c.decodeIfPresent(Int.self, forKey: .topOffset)) ?? 0
         leftOffset = (try? c.decodeIfPresent(Int.self, forKey: .leftOffset)) ?? 0
         gridFit = (try? c.decodeIfPresent(Bool.self, forKey: .gridFit)) ?? true
+        extraCodes = (try? c.decodeIfPresent(Bool.self, forKey: .extraCodes)) ?? true
         threshold = (try? c.decodeIfPresent(Int.self, forKey: .threshold)) ?? 128
         autoPrintOnOpen = (try? c.decodeIfPresent(Bool.self, forKey: .autoPrintOnOpen)) ?? false
         watchDownloads = (try? c.decodeIfPresent(Bool.self, forKey: .watchDownloads)) ?? false

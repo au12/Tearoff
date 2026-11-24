@@ -1,7 +1,8 @@
 #!/bin/bash
 # End-to-end through the real macOS printing system: a CUPS queue using the Tearoff driver points
 # at a fake Zebra on 127.0.0.1:9100; fixture PDFs are printed with `lp` (exactly what ⌘P does) and
-# the ZPL that arrives is decoded and scanned: right number of labels, every barcode upright.
+# the ZPL that arrives is decoded and scanned: right number of labels (extra codes included), every
+# barcode reading the way expected.json says.
 #
 #   bash tests/cups_e2e.sh build/Tearoff.app [OUTDIR]               # installs the driver itself (sudo)
 #   bash tests/cups_e2e.sh /Applications/Tearoff.app OUTDIR --installed   # driver already installed by the .pkg
@@ -34,7 +35,8 @@ sudo cupsctl --debug-logging 2>/dev/null || true
 sudo lpadmin -p TearoffTest -E -v socket://127.0.0.1:9100 -P "$ROOT/Tearoff.ppd" -o printer-is-shared=false
 sudo cupsenable TearoffTest; sudo cupsaccept TearoffTest
 
-FIXTURES=(01_image_letter_dashed.pdf 03_vector_letter_unframed_rotated.pdf 04_two_up.pdf 08_browser_4x6_shrunk.pdf)
+FIXTURES=(01_image_letter_dashed.pdf 03_vector_letter_unframed_rotated.pdf 04_two_up.pdf 08_browser_4x6_shrunk.pdf
+          14_qr_return_no_label.pdf)
 for f in "${FIXTURES[@]}"; do
   echo "→ lp $f"
   lp -d TearoffTest -t "$f" "tests/fixtures/$f"
@@ -75,9 +77,10 @@ for i, name in enumerate(fixtures, start=1):
         problems.append("missing ^PW812^LL1218")
     for k, (png, e) in enumerate(zip(pngs, exp)):
         found = {b.text: b.orientation for b in zxingcpp.read_barcodes(Image.open(png).convert("L"))}
+        want = e.get("orientation", 0)
         for code in e["barcodes"]:
-            if found.get(code) != 0:
-                problems.append(f"#{k+1} {code}: {'not upright' if code in found else 'does not scan'}")
+            if found.get(code) != want:
+                problems.append(f"#{k+1} {code}: {f'reads at {found[code]} deg' if code in found else 'does not scan'}")
     if problems:
         fail += 1; print(f"FAIL {name}: " + "; ".join(problems))
     else:

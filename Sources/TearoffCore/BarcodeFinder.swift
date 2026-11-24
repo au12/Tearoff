@@ -199,25 +199,54 @@ public enum BarcodeFinder {
         x0 /= Double(k)
         guard x0 > 0 else { return nil }
         var total = 0.0
-        var mtotal = 0
-        for r in runs {
-            total += Double(r)
-            mtotal += max(1, Int((Double(r) / x0).rounded()))
+        for r in runs { total += Double(r) }
+
+        func fit(_ x: Double) -> (resid: Double, max: Int, modules: [Int]) {
+            var m = [Int]()
+            m.reserveCapacity(runs.count)
+            var resid = 0.0
+            var mx = 0
+            for r in runs {
+                let v = Double(r) / x
+                let mi = max(1, Int(v.rounded()))
+                resid += abs(v - Double(mi))
+                mx = max(mx, mi)
+                m.append(mi)
+            }
+            return (resid / Double(runs.count), mx, m)
         }
-        let x = total / Double(mtotal)
-        var m = [Int]()
-        m.reserveCapacity(runs.count)
-        var resid = 0.0
-        var mx = 0
-        for r in runs {
-            let v = Double(r) / x
-            let mi = max(1, Int(v.rounded()))
-            resid += abs(v - Double(mi))
-            mx = max(mx, mi)
-            m.append(mi)
+        func refine(_ x: Double) -> Double {
+            var mtotal = 0
+            for r in runs { mtotal += max(1, Int((Double(r) / x).rounded())) }
+            return total / Double(mtotal)
         }
-        if mx > 4 || resid / Double(runs.count) > 0.22 { return nil }
-        return (x, m)
+
+        // The narrowest elements give a first module estimate. Thresholding thins bars (or spaces),
+        // so at 3–4 px per module that estimate reads small and 3–4 module elements round wrong:
+        // refine it against the total length, and try the exact Code 128 module when the element
+        // count fits 6n + 1. Keep whichever quantizes cleanest.
+        var x = refine(x0)
+        var best: (resid: Double, x: Double, modules: [Int])? = nil
+        let first = fit(x)
+        if first.max <= 4 { best = (first.resid, x, first.modules) }
+        if best == nil || best!.resid > 0.12 {
+            var xs: [Double] = []
+            for _ in 0..<3 {
+                let nx = refine(x)
+                if abs(nx - x) < 1e-9 { break }
+                xs.append(nx)
+                x = nx
+            }
+            if runs.count >= 19 && (runs.count - 1) % 6 == 0 {
+                xs.append(total / Double(11 * (runs.count - 1) / 6 + 2))
+            }
+            for cx in xs {
+                let f = fit(cx)
+                if f.max <= 4 && (best == nil || f.resid < best!.resid) { best = (f.resid, cx, f.modules) }
+            }
+        }
+        guard let b = best, b.resid <= 0.22 else { return nil }
+        return (b.x, b.modules)
     }
 
     // MARK: Code 128

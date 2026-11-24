@@ -7,6 +7,13 @@
           "420627019205"
         ],
         "source": "image"
+      },
+      {
+        "barcodes": [
+          "RmaSLIP42x"
+        ],
+        "kind": "barcode",
+        "orientation": -90
       }
     ]
   },
@@ -18,6 +25,13 @@
           "420627019205"
         ],
         "source": "vector"
+      },
+      {
+        "barcodes": [
+          "RECEIPT0001"
+        ],
+        "kind": "barcode",
+        "orientation": -90
       }
     ]
   },
@@ -90,6 +104,13 @@
           "420627019205"
         ],
         "source": "image"
+      },
+      {
+        "barcodes": [
+          "RmaSLIP42x"
+        ],
+        "kind": "barcode",
+        "orientation": -90
       }
     ]
   },
@@ -143,6 +164,47 @@
         "barcodes": [
           "9400111899223197428490"
         ]
+      },
+      {
+        "barcodes": [
+          "RECEIPT0001"
+        ],
+        "kind": "barcode",
+        "orientation": -90
+      }
+    ]
+  },
+  "14_qr_return_no_label.pdf": {
+    "labels": [
+      {
+        "barcodes": [
+          "https://www.example.com/returns/qr/R7XK2QP9"
+        ],
+        "kind": "qr",
+        "orientation": 0
+      }
+    ]
+  },
+  "15_label_with_side_codes.pdf": {
+    "labels": [
+      {
+        "barcodes": [
+          "9400111899223197428490"
+        ]
+      },
+      {
+        "barcodes": [
+          "https://www.example.com/returns/qr/R7XK2QP9"
+        ],
+        "kind": "qr",
+        "orientation": 0
+      },
+      {
+        "barcodes": [
+          "ORDER-5521-B"
+        ],
+        "kind": "barcode",
+        "orientation": -90
       }
     ]
   }

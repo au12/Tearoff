@@ -41,7 +41,8 @@ public struct PageContent {
 public typealias RegionRenderer = (_ rect: PageRect, _ width: Int, _ height: Int, _ exactPixels: Bool) -> GrayImage
 
 public struct LabelCandidate {
-    public enum Kind: String { case image, frame, block, page }
+    /// `code`: a barcode or QR code outside the labels, printed on a label of its own.
+    public enum Kind: String { case image, frame, block, page, code }
     public var kind: Kind
     public var rect: PageRect
     /// Native pixel size (image candidates).
@@ -53,6 +54,10 @@ public struct LabelCandidate {
     public var barcodeQuarter: Int?
     /// Quarter turns clockwise that make this label upright.
     public var quarterTurns = 0
+    /// `code` candidates: what the symbol is ("Code 128", "QR code", "barcode").
+    public var symbology = ""
+    /// `code` candidates: white space (points, page axes) the symbol needs around `rect` to scan.
+    public var quietZone: (x: Double, y: Double) = (0, 0)
 
     public init(kind: Kind, rect: PageRect) {
         self.kind = kind
@@ -68,6 +73,14 @@ public struct LabelCandidate {
     public var texts: [String] { barcodes.compactMap { $0.text } }
 }
 
+/// Everything found on one page.
+public struct PageFindings {
+    /// Shipping labels, best first in reading order.
+    public var labels: [LabelCandidate]
+    /// Barcodes and QR codes outside those labels (empty unless asked for).
+    public var codes: [LabelCandidate]
+}
+
 public enum LabelFinder {
 
     static func aspectScore(_ a: Double, target t: Double) -> Double {
@@ -79,9 +92,15 @@ public enum LabelFinder {
     /// Finds the labels on a page, best first in reading order.
     public static func find(page: PageContent, label: LabelSize = .fourBySix, trace: PerfTrace? = nil,
                             render: RegionRenderer) -> [LabelCandidate] {
+        analyze(page: page, label: label, extras: false, trace: trace, render: render).labels
+    }
+
+    /// Finds the labels on a page and, with `extras`, the barcodes and QR codes outside them.
+    public static func analyze(page: PageContent, label: LabelSize = .fourBySix, extras: Bool, trace: PerfTrace? = nil,
+                               render: RegionRenderer) -> PageFindings {
         let t = trace ?? PerfTrace()
         let W = page.width, H = page.height
-        guard W > 1, H > 1 else { return [] }
+        guard W > 1, H > 1 else { return PageFindings(labels: [], codes: []) }
         let T = label.aspect
         let labelShort = min(label.width, label.height)
         let pageR = page.rect
@@ -208,7 +227,7 @@ public enum LabelFinder {
                 case .image: sc += 2
                 case .frame: sc += 1.5
                 case .page: sc += 1
-                case .block: sc += 0
+                case .block, .code: sc += 0
                 }
                 c.score = sc
                 slots.lock(); done[i] = c; slots.unlock()
@@ -291,7 +310,14 @@ public enum LabelFinder {
         for i in chosen.indices {
             chosen[i].quarterTurns = orientation(chosen[i], texts: page.texts)
         }
-        return chosen
+        var codes: [LabelCandidate] = []
+        if extras {
+            codes = t.measure("find.extras") {
+                CodeFinder.find(big: big, scale: hb, linear: pageCodes, labels: chosen.map { $0.rect }, trace: t)
+            }
+            t.count("extra_codes", codes.count)
+        }
+        return PageFindings(labels: chosen, codes: codes)
     }
 
     static func orientation(_ c: LabelCandidate, texts: [TextRun]) -> Int {

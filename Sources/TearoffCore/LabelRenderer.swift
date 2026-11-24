@@ -20,6 +20,8 @@ public struct RenderedLabel {
     public var gridFitted: Int
     /// Decoded Code 128 texts (tracking numbers etc.).
     public var barcodeTexts: [String]
+    /// Quarter turns clockwise from the page to the printed label, when the renderer chose them.
+    public var quarterTurns: Int? = nil
 }
 
 /// How a found region maps onto the label stock.
@@ -82,9 +84,57 @@ public enum LabelRenderer {
         return finish(g, options: options, into: dest, trace: trace)
     }
 
+    /// Renders an extra code (a barcode or QR code plus its text) as large as the stock allows,
+    /// keeping its quiet zone, and lays it on its side when that makes it bigger. Barcodes are
+    /// grid-fitted in the upright frame first, so the turn (a lossless bit rotation) keeps them exact.
+    public static func renderCode(_ c: LabelCandidate, options: RenderOptions, trace: PerfTrace? = nil,
+                                  render: RegionRenderer) -> RenderedLabel {
+        let (TW, TH) = options.size.dots(dpi: options.dpi)
+        let q = ((c.quarterTurns % 4) + 4) % 4
+        let rect = c.rect
+        guard rect.width > 0, rect.height > 0 else {
+            return RenderedLabel(image: GrayImage(width: TW, height: TH), gridFitted: 0, barcodeTexts: [])
+        }
+        // upright size in points, quiet zone included
+        let pw = rect.width + 2 * c.quietZone.x, ph = rect.height + 2 * c.quietZone.y
+        let (uw, uh) = q % 2 == 0 ? (pw, ph) : (ph, pw)
+        let kUpright = min(Double(TW) * 0.96 / uw, Double(TH) * 0.96 / uh)
+        let kSideways = min(Double(TH) * 0.96 / uw, Double(TW) * 0.96 / uh)
+        let sideways = kSideways > kUpright * 1.02
+        let k = sideways ? kSideways : kUpright          // dots per point
+        var canvas = options
+        if sideways { canvas.size = LabelSize(width: options.size.height, height: options.size.width) }
+        let (CW, CH) = canvas.size.dots(dpi: options.dpi)
+
+        // render the region 3x oversampled onto white that carries the quiet zone, so nothing next
+        // to the code comes along and the barcode finder sees clean margins
+        var f = 3 * k                                     // pixels per point
+        let maxPixels = 40_000_000.0
+        if pw * ph * f * f > maxPixels { f = (maxPixels / (pw * ph)).squareRoot() }
+        let rw = max(1, Int((rect.width * f).rounded())), rh = max(1, Int((rect.height * f).rounded()))
+        let raw = trace.measureOrRun("render.region") { render(rect, rw, rh, false) }
+        trace?.count("render_pixels", rw * rh)
+        var padded = GrayImage(width: max(rw, Int((pw * f).rounded())), height: max(rh, Int((ph * f).rounded())))
+        padded.paste(raw, x: (padded.width - rw) / 2, y: (padded.height - rh) / 2)
+        let g = trace.measureOrRun("render.rotate") { padded.rotated(quarterTurnsCW: q) }
+        let (ow, oh) = (Double(g.width) / f * k, Double(g.height) / f * k)
+        let owI = max(1, min(CW, Int(ow.rounded()))), ohI = max(1, min(CH, Int(oh.rounded())))
+        let dest = PixelRect(x0: (CW - owI) / 2, y0: (CH - ohI) / 2, x1: (CW - owI) / 2 + owI, y1: (CH - ohI) / 2 + ohI)
+        // barcode size limits apply at the page's own scale, where the symbol had normal proportions
+        var out = finish(g, options: canvas, into: dest, ppi: f * 72, trace: trace)
+        if sideways {
+            let turned = trace.measureOrRun("render.rotate") { out.image.rotated(quarterTurnsCW: 3) }
+            out.image = turned
+        }
+        out.quarterTurns = (q + (sideways ? 3 : 0)) % 4
+        return out
+    }
+
     /// Fits an upright high-resolution raster onto the label (or into `dest`), thresholds it and
-    /// grid-fits barcodes.
-    public static func finish(_ g: GrayImage, options: RenderOptions, into dest: PixelRect? = nil, trace: PerfTrace? = nil) -> RenderedLabel {
+    /// grid-fits barcodes. `ppi` (pixels per inch of `g` at the scale barcode limits apply to)
+    /// defaults to the label's own scale.
+    public static func finish(_ g: GrayImage, options: RenderOptions, into dest: PixelRect? = nil, ppi: Double? = nil,
+                              trace: PerfTrace? = nil) -> RenderedLabel {
         let (TW, TH) = options.size.dots(dpi: options.dpi)
         let gw = g.width, gh = g.height
         guard gw > 0, gh > 0 else { return RenderedLabel(image: GrayImage(width: TW, height: TH), gridFitted: 0, barcodeTexts: []) }
@@ -106,7 +156,7 @@ public enum LabelRenderer {
         out.paste(small, x: ox, y: oy)
         var bits = out.thresholded(options.threshold)
 
-        let hrPPI = Double(min(gw, gh)) / min(options.size.width, options.size.height)
+        let hrPPI = ppi ?? Double(min(gw, gh)) / min(options.size.width, options.size.height)
         let codes = trace.measureOrRun("render.barcodes") { BarcodeFinder.find(in: g, ppi: hrPPI) }
         var texts = codes.compactMap { $0.text }
         var fitted = 0
