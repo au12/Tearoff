@@ -60,7 +60,7 @@ installer puts on your Mac then runs without warnings.
 
 The installer puts Tearoff in /Applications and `tearoff` in /usr/local/bin. Two optional parts are on by default: the **Zebra
 printer driver** (/Library/Printers/Tearoff) and the **Print Label with Tearoff** item in every Print dialog's PDF menu. When it
-finishes, Tearoff opens. Requires macOS 13+ on Apple Silicon.
+finishes, Tearoff opens. Requires macOS 13 or later, on an Apple Silicon or Intel Mac.
 
 Building from source: `./install.sh` (Xcode or the Command Line Tools) builds the same package and opens it.
 
@@ -160,7 +160,7 @@ python3 tests/verify.py build/Tearoff.app/Contents/Helpers/tearoff tests/fixture
 bash tests/cups_e2e.sh build/Tearoff.app      # real CUPS + driver + fake Zebra on :9100 (needs sudo)
 ```
 
-CI (`.github/workflows/build.yml`) runs on Apple Silicon: unit tests, every fixture through the extractor (each expected
+CI (`.github/workflows/build.yml`) builds a universal app and runs on Apple Silicon (or Intel, picked by hand when those runners are backed up): unit tests, every fixture through the extractor (each expected
 barcode must scan upright from the 203 dpi output), the full macOS print path (`lp` → Tearoff filter → fake Zebra → ZPL decoded and
 scanned), installing the real `.pkg` on the runner first, a benchmark, screenshots (including the installer), and a rolling
 `latest` release with `Tearoff.pkg`.

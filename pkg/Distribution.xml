@@ -3,7 +3,7 @@
     <title>Tearoff</title>
     <organization>com.au12</organization>
     <domains enable_localSystem="true"/>
-    <options customize="allow" require-scripts="false" hostArchitectures="arm64"/>
+    <options customize="allow" require-scripts="false" hostArchitectures="arm64,x86_64"/>
     <volume-check>
         <allowed-os-versions>
             <os-version min="13.0"/>

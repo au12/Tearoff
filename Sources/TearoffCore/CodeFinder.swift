@@ -47,8 +47,8 @@ public enum CodeFinder {
             c.symbology = b.text != nil ? "Code 128" : "barcode"
             let up = BarcodeFinder.uprightQuarterTurns([b])
             c.quarterTurns = up ?? (b.axis == 0 ? 0 : 3)
-            // Code 128 wants 10 modules of white either end
-            let quiet = 10 * b.module / hb
+            // Code 128 wants 10 modules of white either end (and never less than ~1/16 in)
+            let quiet = max(10 * b.module / hb, 4.5)
             c.quietZone = b.axis == 0 ? (quiet, 0) : (0, quiet)
             out.append(c)
         }

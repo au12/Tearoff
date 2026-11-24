@@ -1,12 +1,15 @@
 #!/bin/bash
-# Builds build/Tearoff.app (Apple Silicon). Needs Xcode or the Command Line Tools.
+# Builds build/Tearoff.app as a universal app (Apple Silicon + Intel). Needs Xcode or the Command Line Tools.
+# ARCHS="arm64" ./build.sh builds for one architecture only (faster).
 #   Contents/MacOS/Tearoff            the app
 #   Contents/Helpers/tearoff          command-line tool
 #   Contents/Helpers/tearoff-filter   CUPS filter (copied to /Library/Printers/Tearoff by the driver installer)
 set -euo pipefail
 cd "$(dirname "$0")"
 
-ARCH="${ARCH:-arm64}"
+ARCHS="${ARCHS:-${ARCH:-arm64 x86_64}}"
+ARCH_FLAGS=()
+for a in $ARCHS; do ARCH_FLAGS+=(--arch "$a"); done
 APP="build/Tearoff.app"
 
 if ! xcrun --find swift >/dev/null 2>&1; then
@@ -28,9 +31,9 @@ public enum BuildInfo {
 EOF2
 fi
 
-echo "→ Compiling ($ARCH)…"
-swift build -c release --arch "$ARCH"
-BIN="$(swift build -c release --arch "$ARCH" --show-bin-path)"
+echo "→ Compiling ($ARCHS)…"
+swift build -c release "${ARCH_FLAGS[@]}"
+BIN="$(swift build -c release "${ARCH_FLAGS[@]}" --show-bin-path)"
 
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Helpers" "$APP/Contents/Resources"
