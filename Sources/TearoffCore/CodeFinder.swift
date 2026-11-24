@@ -35,8 +35,10 @@ public enum CodeFinder {
         var out: [LabelCandidate] = []
 
         for b in linear {
-            // decoded Code 128, or a clearly barcode-shaped run of bars in another symbology
-            guard b.text != nil || (b.lines >= 6 && b.elements >= 30) else { continue }
+            // decoded Code 128, or a clearly barcode-shaped block of bars in another symbology: tall
+            // enough (a quarter inch) that a line of big, regular lettering can't pass for one
+            let across = Double(b.axis == 0 ? b.rect.height : b.rect.width) / hb
+            guard b.text != nil || (b.lines >= 8 && b.elements >= 30 && across >= 18) else { continue }
             let symbol = toPage(b.rect)
             if insideLabel(symbol) { continue }
             let grown = grow(ink(), b.rect, textBeside: b.axis == 1, scale: hb, qr: false)

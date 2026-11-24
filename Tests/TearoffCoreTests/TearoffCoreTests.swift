@@ -358,6 +358,6 @@ final class ExtraCodeTests: XCTestCase {
         let upright = out.image.rotated(quarterTurnsCW: 1)
         let again = BarcodeFinder.find(in: upright, ppi: 300)      // 7-dot modules: wide bars by label standards
         XCTAssertEqual(again.compactMap { $0.text }, ["RmaSLIP42x"])
-        if let b = again.first { XCTAssertGreaterThan(Double(b.rect.width), 0.75 * 1218) }
+        if let b = again.first(where: { $0.text != nil }) { XCTAssertGreaterThan(Double(b.rect.width), 0.75 * 1218) }
     }
 }
