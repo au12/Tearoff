@@ -41,12 +41,16 @@ snapped to the printer's dot grid. That includes labels sitting on a letter-size
 
 ## Install
 
-**[Download Tearoff.pkg](https://github.com/au12/Tearoff/releases/download/latest/Tearoff.pkg)** and open it. It's a standard macOS
-installer. Or, from Terminal (this downloads the same package and opens it, without the "unidentified developer" prompt):
+Paste this into Terminal. It downloads the installer and opens it, with no Gatekeeper warning:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/au12/Tearoff/main/get.sh | bash
 ```
+
+Or **[download Tearoff.pkg](https://github.com/au12/Tearoff/releases/download/latest/Tearoff.pkg)** in a browser. Tearoff isn't
+signed by a paid Apple Developer account, so macOS will say *"Tearoff.pkg" Not Opened*. Click **Done**, open **System Settings →
+Privacy & Security**, scroll down, click **Open Anyway** next to Tearoff.pkg, and confirm. You only do this once. Everything the
+installer puts on your Mac then runs without warnings.
 
 <p align="center"><img src="docs/installer.png" width="560" alt="The Tearoff installer"></p>
 
@@ -54,9 +58,7 @@ The installer puts Tearoff in /Applications and `tearoff` in /usr/local/bin. Two
 printer driver** (/Library/Printers/Tearoff) and the **Print Label with Tearoff** item in every Print dialog's PDF menu. When it
 finishes, Tearoff opens. Requires macOS 13+ on Apple Silicon.
 
-The package isn't notarized. If you downloaded it in a browser and macOS refuses to open it, go to System Settings →
-Privacy & Security and click **Open Anyway** (or use the Terminal line above). Building from source: `./install.sh` (Xcode or
-the Command Line Tools) builds the same package and opens it.
+Building from source: `./install.sh` (Xcode or the Command Line Tools) builds the same package and opens it.
 
 ## Set up (once)
 
