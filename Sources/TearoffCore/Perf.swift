@@ -1,12 +1,16 @@
 import Foundation
 
-/// Lightweight timing of pipeline phases. One trace per document/operation; not thread-safe
-/// (each extraction runs on one queue).
+/// Lightweight timing of pipeline phases. One trace per document/operation. Thread-safe: phases
+/// measured on several threads at once add up (so they can exceed wall time).
 public final class PerfTrace {
-    /// Accumulated milliseconds per phase, in first-seen order.
-    public private(set) var phases: [(name: String, ms: Double)] = []
-    public private(set) var counters: [String: Int] = [:]
+    private var _phases: [(name: String, ms: Double)] = []
+    private var _counters: [String: Int] = [:]
+    private let lock = NSLock()
     private let started: TimeInterval
+
+    /// Accumulated milliseconds per phase, in first-seen order.
+    public var phases: [(name: String, ms: Double)] { lock.lock(); defer { lock.unlock() }; return _phases }
+    public var counters: [String: Int] { lock.lock(); defer { lock.unlock() }; return _counters }
 
     public init() { started = ProcessInfo.processInfo.systemUptime }
 
@@ -21,21 +25,23 @@ public final class PerfTrace {
     }
 
     public func add(_ name: String, ms: Double) {
-        if let i = phases.firstIndex(where: { $0.name == name }) {
-            phases[i].ms += ms
+        lock.lock(); defer { lock.unlock() }
+        if let i = _phases.firstIndex(where: { $0.name == name }) {
+            _phases[i].ms += ms
         } else {
-            phases.append((name, ms))
+            _phases.append((name, ms))
         }
     }
 
-    public func count(_ name: String, _ n: Int = 1) { counters[name, default: 0] += n }
+    public func count(_ name: String, _ n: Int = 1) { lock.lock(); _counters[name, default: 0] += n; lock.unlock() }
 
-    public func set(_ name: String, _ n: Int) { counters[name] = n }
+    public func set(_ name: String, _ n: Int) { lock.lock(); _counters[name] = n; lock.unlock() }
 
     /// Folds another trace in (e.g. per-page traces into a document trace).
     public func merge(_ other: PerfTrace) {
-        for p in other.phases { add(p.name, ms: p.ms) }
-        for (k, v) in other.counters { counters[k, default: 0] += v }
+        let ps = other.phases, cs = other.counters
+        for p in ps { add(p.name, ms: p.ms) }
+        lock.lock(); for (k, v) in cs { _counters[k, default: 0] += v }; lock.unlock()
     }
 
     public var phaseDictionary: [String: Double] {

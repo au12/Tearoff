@@ -169,42 +169,52 @@ public enum LabelFinder {
 
         // --- read barcodes inside every candidate at ~300 px per label-inch
         t.count("candidates", cands.count)
-        for i in cands.indices {
-            var c = cands[i]
-            let raster: GrayImage
-            let ppi: Double
-            if c.kind == .image, let n = c.native, min(n.width, n.height) >= 900 {
-                raster = t.measure("find.candidate_render") { render(c.rect, n.width, n.height, true) }
-                ppi = Double(min(n.width, n.height)) / labelShort
-            } else {
-                let s = 1200 / max(1, min(c.rect.width, c.rect.height))
-                let rw = max(2, Int((c.rect.width * s).rounded())), rh = max(2, Int((c.rect.height * s).rounded()))
-                if s <= hb * 1.05 {
-                    // the high-resolution page render is sharp enough: crop it instead of re-rendering
-                    let crop = big.cropped(PixelRect(x0: Int((c.rect.x0 * hb).rounded()), y0: Int((c.rect.y0 * hb).rounded()),
-                                                     x1: Int((c.rect.x1 * hb).rounded()), y1: Int((c.rect.y1 * hb).rounded())))
-                    raster = t.measure("find.candidate_render") { crop.resampled(width: rw, height: rh) }
+        // Candidates are independent: render and read each on its own core. Quartz draws one
+        // CGPDFPage into separate contexts concurrently; the hi-res page raster is only read.
+        let work = cands
+        var done = [LabelCandidate?](repeating: nil, count: work.count)
+        let slots = NSLock()
+        t.measure("find.candidates_wall") {
+            DispatchQueue.concurrentPerform(iterations: work.count) { i in
+                var c = work[i]
+                let raster: GrayImage
+                let ppi: Double
+                if c.kind == .image, let n = c.native, min(n.width, n.height) >= 900 {
+                    raster = t.measure("find.candidate_native") { render(c.rect, n.width, n.height, true) }
+                    ppi = Double(min(n.width, n.height)) / labelShort
                 } else {
-                    raster = t.measure("find.candidate_render") { render(c.rect, rw, rh, false) }
+                    let s = 1200 / max(1, min(c.rect.width, c.rect.height))
+                    let rw = max(2, Int((c.rect.width * s).rounded())), rh = max(2, Int((c.rect.height * s).rounded()))
+                    if s <= hb * 1.05 {
+                        // the high-resolution page render is sharp enough: crop it instead of re-rendering
+                        raster = t.measure("find.candidate_crop") {
+                            big.cropped(PixelRect(x0: Int((c.rect.x0 * hb).rounded()), y0: Int((c.rect.y0 * hb).rounded()),
+                                                  x1: Int((c.rect.x1 * hb).rounded()), y1: Int((c.rect.y1 * hb).rounded())))
+                                .resampled(width: rw, height: rh)
+                        }
+                    } else {
+                        raster = t.measure("find.candidate_render") { render(c.rect, rw, rh, false) }
+                    }
+                    ppi = 1200 / labelShort
                 }
-                ppi = 1200 / labelShort
+                c.barcodes = t.measure("find.candidate_barcodes") { BarcodeFinder.find(in: raster, ppi: ppi) }
+                c.barcodeQuarter = BarcodeFinder.uprightQuarterTurns(c.barcodes)
+                let d = c.dims
+                c.aspect = max(d.0, d.1) / max(0.001, min(d.0, d.1))
+                let minDim = Double(min(raster.width, raster.height))
+                c.bigBarcodes = c.barcodes.filter { Double($0.length) >= 0.22 * minDim }.count
+                var sc = aspectScore(c.aspect, target: T) * 2 + Double(min(c.barcodes.count, 3)) + (c.bigBarcodes > 0 ? 1 : 0)
+                switch c.kind {
+                case .image: sc += 2
+                case .frame: sc += 1.5
+                case .page: sc += 1
+                case .block: sc += 0
+                }
+                c.score = sc
+                slots.lock(); done[i] = c; slots.unlock()
             }
-            c.barcodes = t.measure("find.candidate_barcodes") { BarcodeFinder.find(in: raster, ppi: ppi) }
-            c.barcodeQuarter = BarcodeFinder.uprightQuarterTurns(c.barcodes)
-            let d = c.dims
-            c.aspect = max(d.0, d.1) / max(0.001, min(d.0, d.1))
-            let minDim = Double(min(raster.width, raster.height))
-            c.bigBarcodes = c.barcodes.filter { Double($0.length) >= 0.22 * minDim }.count
-            var s = aspectScore(c.aspect, target: T) * 2 + Double(min(c.barcodes.count, 3)) + (c.bigBarcodes > 0 ? 1 : 0)
-            switch c.kind {
-            case .image: s += 2
-            case .frame: s += 1.5
-            case .page: s += 1
-            case .block: s += 0
-            }
-            c.score = s
-            cands[i] = c
         }
+        cands = done.enumerated().map { $0.element ?? work[$0.offset] }
 
         var valid = cands.filter { !$0.barcodes.isEmpty }
         if valid.isEmpty {
