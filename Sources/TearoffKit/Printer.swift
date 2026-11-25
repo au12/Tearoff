@@ -6,21 +6,38 @@ import TearoffCore
 public enum PrinterTarget: Codable, Hashable, CustomStringConvertible {
     /// Raw TCP (port 9100) straight to a network printer.
     case network(host: String, port: Int)
-    /// A macOS print queue, fed raw ZPL (works for USB printers too).
+    /// A macOS print queue, fed raw ZPL.
     case queue(name: String)
+    /// A printer plugged in by USB (its CUPS device URI). Labels go through whichever macOS print
+    /// queue uses that device, fed raw ZPL, so it has to be added to the Mac first.
+    case usb(uri: String)
 
     public var description: String {
         switch self {
         case .network(let h, let p): return p == 9100 ? h : "\(h):\(p)"
         case .queue(let n): return n
+        case .usb(let uri): return "\(USBPrinterInfo(uri: uri).displayName) (USB)"
         }
     }
 
-    /// "10.0.10.50", "10.0.10.50:9100" or "queue:Zebra_GX420d".
+    public var isNetwork: Bool { if case .network = self { return true } else { return false } }
+    public var isUSB: Bool { if case .usb = self { return true } else { return false } }
+
+    /// "network", "usb" or "queue", for logs.
+    public var kind: String {
+        switch self {
+        case .network: return "network"
+        case .usb: return "usb"
+        case .queue: return "queue"
+        }
+    }
+
+    /// "10.0.10.50", "10.0.10.50:9100", "queue:Zebra_GX420d" or a "usb://…" device URI.
     public init?(string: String) {
         let s = string.trimmingCharacters(in: .whitespaces)
         guard !s.isEmpty else { return nil }
         if s.hasPrefix("queue:") { self = .queue(name: String(s.dropFirst(6))); return }
+        if s.hasPrefix("usb://") { self = .usb(uri: s); return }
         if let u = URL(string: s), let scheme = u.scheme, ["socket", "tcp", "raw"].contains(scheme), let h = u.host {
             self = .network(host: h, port: u.port ?? 9100); return
         }
@@ -125,13 +142,30 @@ public enum ZebraPrinter {
             // give the print server a moment to drain before we close
             _ = c.receive(timeout: 0.2, idle: 0.1)
         case .queue(let name):
-            let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("tearoff-\(UUID().uuidString).zpl")
-            try data.write(to: tmp)
-            defer { try? FileManager.default.removeItem(at: tmp) }
-            let r = Shell.run("/usr/bin/lp", ["-d", name, "-o", "raw", "-t", title, tmp.path])
-            if r.status != 0 {
-                throw TearoffError.printer("macOS couldn’t queue the label on “\(name)”: \(r.output.trimmingCharacters(in: .whitespacesAndNewlines))")
+            try sendRaw(data, queue: name, title: title)
+        case .usb(let uri):
+            guard let q = queue(forUSB: uri) else {
+                throw TearoffError.printer("This USB printer isn’t in your Mac’s printer list yet. Add it first: Tearoff ▸ Setup Assistant, or Print Driver ▸ Add Printer.")
             }
+            try sendRaw(data, queue: q.name, title: title)
+        }
+    }
+
+    /// The macOS print queue that prints to this USB device, if there is one (a Tearoff queue first).
+    public static func queue(forUSB uri: String) -> QueueInfo? {
+        let matches = Discovery.queues().filter { USBDevices.sameDevice($0.uri, uri) }
+        let tearoff = Set(Driver.tearoffQueues())
+        return matches.first(where: { tearoff.contains($0.name) }) ?? matches.first
+    }
+
+    /// Hands a raw job (ZPL, untouched by any filter) to a macOS print queue.
+    static func sendRaw(_ data: Data, queue name: String, title: String) throws {
+        let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("tearoff-\(UUID().uuidString).zpl")
+        try data.write(to: tmp)
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        let r = Shell.run("/usr/bin/lp", ["-d", name, "-o", "raw", "-t", title, tmp.path])
+        if r.status != 0 {
+            throw TearoffError.printer("macOS couldn’t queue the label on “\(name)”: \(r.output.trimmingCharacters(in: .whitespacesAndNewlines))")
         }
     }
 

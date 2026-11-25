@@ -362,3 +362,89 @@ final class ExtraCodeTests: XCTestCase {
         if let b = again.first(where: { $0.text != nil }) { XCTAssertGreaterThan(Double(b.rect.width), 0.75 * 1218) }
     }
 }
+
+final class USBTests: XCTestCase {
+    let lpinfo = """
+    Device: uri = usb://Zebra%20Technologies/ZTC%20GX420d?serial=28J154300123
+            class = direct
+            info = Zebra Technologies ZTC GX420d
+            make-and-model = Zebra Technologies ZTC GX420d
+            device-id = MANUFACTURER:Zebra Technologies;COMMAND SET:ZPL;MODEL:ZTC GX420d;CLASS:PRINTER;OPTIONS:XML;
+            location =
+    Device: uri = usb://Brother/HL-L2350DW%20series?serial=U63891E9N123456
+            class = direct
+            info = Brother HL-L2350DW series
+            make-and-model = Brother HL-L2350DW series
+            device-id = MFG:Brother;CMD:PJL,PCL,PCLXL,URF;MDL:HL-L2350DW series;CLS:PRINTER;
+            location =
+    Device: uri = socket
+            class = network
+            info = AppSocket/HP JetDirect
+            make-and-model = Unknown
+            device-id =
+            location =
+    """
+
+    func testReadsCUPSDeviceList() {
+        let found = USBDevices.parseLPInfo(lpinfo)
+        XCTAssertEqual(found.count, 2)
+        let zebra = found[0]
+        XCTAssertTrue(zebra.isZebra)
+        XCTAssertEqual(zebra.model, "ZTC GX420d")
+        XCTAssertEqual(zebra.displayName, "GX420d")
+        XCTAssertEqual(zebra.serial, "28J154300123")
+        XCTAssertEqual(zebra.speaksZPL, true)
+        XCTAssertEqual(zebra.dpi, 203)
+        XCTAssertEqual(zebra.makeAndModel, "Zebra Technologies ZTC GX420d")
+        XCTAssertFalse(found[1].isZebra)
+        XCTAssertEqual(found[1].speaksZPL, false)
+    }
+
+    func testReadsTheUSBBackendsOwnList() {
+        let out = """
+        direct usb "Unknown" "USB Printer (usb)"
+        direct usb://Zebra%20Technologies/ZTC%20LP%202844?serial=42A000001 "Zebra Technologies ZTC LP 2844" "Zebra Technologies ZTC LP 2844" "MFG:Zebra Technologies;MDL:ZTC LP 2844;" ""
+        """
+        let found = USBDevices.parseBackendList(out)
+        XCTAssertEqual(found.count, 1)
+        XCTAssertEqual(found[0].model, "ZTC LP 2844")
+        XCTAssertEqual(found[0].displayName, "LP 2844")
+        XCTAssertTrue(found[0].isZebra)
+        XCTAssertEqual(found[0].speaksZPL, false, "an LP 2844 without -Z only speaks EPL")
+        XCTAssertEqual(USBDevices.tokens(#"a "b c" "" d"#), ["a", "b c", "", "d"])
+    }
+
+    func testModelFromTheURIWhenThereIsNoDeviceID() {
+        let p = USBPrinterInfo(uri: "usb://Zebra%20Technologies/ZTC%20ZD421-300dpi%20ZPL?serial=D4J1")
+        XCTAssertEqual(p.manufacturer, "Zebra Technologies")
+        XCTAssertEqual(p.displayName, "ZD421-300dpi")
+        XCTAssertEqual(p.dpi, 300)
+        XCTAssertNil(p.speaksZPL)
+        XCTAssertTrue(p.isZebra)
+        XCTAssertEqual(USBDevices.parseDeviceID("MFG:Zebra;CMD:ZPL,EPL;MDL:ZTC ZD421;")["CMD"], "ZPL,EPL")
+    }
+
+    func testSameDevice() {
+        let a = "usb://Zebra%20Technologies/ZTC%20GX420d?serial=28J1"
+        XCTAssertTrue(USBDevices.sameDevice(a, "usb://Zebra%20Technologies/ZTC%20GX420d?serial=28j1"))
+        XCTAssertFalse(USBDevices.sameDevice(a, "usb://Zebra%20Technologies/ZTC%20GX420d?serial=28J2"))
+        XCTAssertTrue(USBDevices.sameDevice("usb://Zebra%20Technologies/ZTC%20GX420d",
+                                            "usb://Zebra Technologies/ZTC GX420d?location=14100000"))
+        XCTAssertFalse(USBDevices.sameDevice(a, "socket://10.0.10.50:9100"))
+        XCTAssertEqual(USBDevices.uri(manufacturer: "Zebra Technologies", product: "ZTC GX420d", serial: "28J1"), a)
+    }
+
+    func testResolutionAndLanguageFromTheModel() {
+        XCTAssertEqual(USBDevices.guessDPI(model: "ZTC GX420d"), 203)
+        XCTAssertEqual(USBDevices.guessDPI(model: "ZTC GK420d"), 203)
+        XCTAssertEqual(USBDevices.guessDPI(model: "ZTC GX430t"), 300)
+        XCTAssertEqual(USBDevices.guessDPI(model: "ZTC ZT410-300dpi ZPL"), 300)
+        XCTAssertEqual(USBDevices.guessDPI(model: "ZTC ZT610-600dpi ZPL"), 600)
+        XCTAssertTrue(USBDevices.eplOnly("ZTC LP 2844"))
+        XCTAssertTrue(USBDevices.eplOnly("ZTC ZP 505"))
+        XCTAssertFalse(USBDevices.eplOnly("ZTC LP 2844-Z"))
+        XCTAssertFalse(USBDevices.eplOnly("TLP 2844-Z"))
+        XCTAssertFalse(USBDevices.eplOnly("ZTC ZP 450"))
+        XCTAssertFalse(USBDevices.eplOnly("ZTC GX420d"))
+    }
+}

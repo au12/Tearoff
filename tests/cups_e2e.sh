@@ -92,5 +92,41 @@ STATUS=$?
 echo "→ Status and identity against the fake printer"
 "$CLI" status --printer 127.0.0.1 || STATUS=1
 
+echo "→ Raw ZPL through a macOS queue (how the app feeds USB printers)"
+N=$(( ${#FIXTURES[@]} + 1 ))
+"$CLI" test-label --queue TearoffTest || STATUS=1
+for _ in $(seq 1 30); do [[ -s "$OUT/job-$N.zpl" ]] && break; sleep 1; done
+sleep 1
+if grep -q '\^XA' "$OUT/job-$N.zpl" 2>/dev/null && ! grep -q '\^GFA' "$OUT/job-$N.zpl"; then
+  echo "PASS raw queue: the test label arrived as sent ($(wc -c < "$OUT/job-$N.zpl" | tr -d ' ') bytes)"
+else
+  echo "FAIL raw queue: job-$N.zpl missing or filtered"; ls "$OUT"; STATUS=1
+fi
+
+echo "→ A USB printer prints through the Mac printer for its device"
+USB_URI='usb://Zebra%20Technologies/ZTC%20GX420d?serial=TEAROFFCI01'
+# created stopped (no -E) but accepting: nothing is plugged in, so the job waits in the queue
+sudo lpadmin -p TearoffUSBTest -v "$USB_URI" -P "$ROOT/Tearoff.ppd" -o printer-is-shared=false
+sudo cupsaccept TearoffUSBTest
+if "$CLI" test-label --printer "$USB_URI"; then
+  if lpstat -o TearoffUSBTest 2>/dev/null | grep -q TearoffUSBTest; then
+    echo "PASS usb: the job went to TearoffUSBTest"
+  else
+    echo "FAIL usb: no job on TearoffUSBTest"; STATUS=1
+  fi
+else
+  echo "FAIL usb: couldn't send to $USB_URI"; STATUS=1
+fi
+"$CLI" status --printer "$USB_URI" | tee "$OUT/usb-status.txt" || true
+grep -q "TearoffUSBTest" "$OUT/usb-status.txt" || { echo "FAIL usb status: didn't name the queue"; STATUS=1; }
+if "$CLI" test-label --printer 'usb://Zebra%20Technologies/ZTC%20ZD421?serial=NOTPLUGGEDIN' 2> "$OUT/usb-missing.txt"; then
+  echo "FAIL usb: a USB printer with no Mac printer should be refused"; STATUS=1
+else
+  echo "PASS usb: refused with: $(cat "$OUT/usb-missing.txt")"
+fi
+"$CLI" discover --usb || true
+cancel -a TearoffUSBTest 2>/dev/null || sudo cancel -a TearoffUSBTest 2>/dev/null || true
+sudo lpadmin -x TearoffUSBTest || true
+
 sudo lpadmin -x TearoffTest || true
 exit $STATUS

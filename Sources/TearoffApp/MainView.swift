@@ -384,6 +384,7 @@ struct StatusDot: View {
         switch health {
         case .ready, .queue: return .green
         case .problem: return .orange
+        case .needsSetup: return .blue
         case .offline: return .red
         case .checking, .unknown: return .gray
         }

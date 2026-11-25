@@ -2,7 +2,8 @@
 
 # Tearoff: crisp Zebra labels from any Mac app
 
-Tearoff is a native macOS printer driver and app for Zebra ZPL label printers (GX420d, GK420d, ZD420/421, ZP 450/500…).
+Tearoff is a native macOS printer driver and app for Zebra ZPL label printers (GX420d, GK420d, ZD420/421, ZP 450/500…),
+on your network or plugged in by USB.
 Print a shipping label from **any** app with ⌘P and get a full-size, upright 4×6 label with every barcode
 snapped to the printer's dot grid. That includes labels sitting on a letter-size web page, labels lying on their side, and two labels per sheet.
 
@@ -28,8 +29,9 @@ snapped to the printer's dot grid. That includes labels sitting on a letter-size
   never redrawn.
 - **Drop a PDF on the app** to preview exactly what the printer will get, dot for dot, then press Return to print.
 - **Watch Downloads**: a new label PDF pops a notification with a Print button, or prints automatically.
-- **Printer tools**: LAN discovery (port 9100 + the printer's web page; nothing that could print is ever sent to an
-  unknown device), live status (paper out, head open, paused), test label, calibrate, darkness, speed, offsets.
+- **Printer tools**: USB and LAN discovery (port 9100 + the printer's web page; nothing that could print is ever sent to an
+  unknown device), live status (paper out, head open, paused on the network; plugged in or not on USB), test label, calibrate,
+  darkness, speed, offsets.
 - **`tearoff` command** for scripts: `tearoff print label.pdf`.
 
 | | Tearoff | CrispDock |
@@ -68,10 +70,11 @@ Building from source: `./install.sh` (Xcode or the Command Line Tools) builds th
 
 When the installer finishes, Tearoff opens its **Setup Assistant**. It takes about a minute:
 
-1. **Find your printer.** Tearoff searches your network and lists Zebras first. A single Zebra is picked for you, or you can
-   type its IP address. macOS asks once to allow local network access; click Allow.
+1. **Find your printer.** Tearoff looks for Zebras plugged into the Mac by USB and on your network, and lists Zebras first.
+   A single Zebra is picked for you, or you can type a network printer's IP address. macOS asks once to allow local network
+   access; click Allow.
 2. **Add it to your Mac.** One click adds e.g. "Zebra GX420d" to the Mac's printers, connected straight to the printer
-   (`socket://IP:9100`), so it's in the Print dialog of every app. Usually no password is needed.
+   (`socket://IP:9100`, or its USB port), so it's in the Print dialog of every app. Usually no password is needed.
 3. **Test print.** Print a test label, then answer *How did it come out?* Each answer has a fix: darkness for too light or too
    dark, calibrating and label stock for cut-off or shifted labels, and troubleshooting when nothing printed. **Open Sample**
    opens a sample return page in Preview, so you can try ⌘P for real. It prints the label, the return barcode and the QR code.
@@ -98,6 +101,11 @@ the main window:
   lays out, including a letter-size return page. Darkness, speed and label stock are under *Printer Features*.
 - **Drop a PDF/image** on the window or the Dock icon, check the preview, press **Print** (⌘P). Double-click a label to see it at printer resolution.
 - **Print dialog → PDF ▾ → Print Label with Tearoff** prints immediately through the app.
+
+**USB printers** print through the Mac printer the Setup Assistant adds for them (macOS's own `usb://` connection), so add a
+USB Zebra once and everything works the same as on the network: ⌘P, dropped PDFs, the Downloads watcher, test labels and
+calibration. USB can't report paper-out or head-open the way the network does, so the status only says whether the printer is
+plugged in. `tearoff discover` lists USB Zebras with the `usb://…` address that `--printer` takes.
 - **Downloads:** turn on *Automation → Watch Downloads*. Only files containing a shipping barcode count.
 - **Terminal:**
 
@@ -149,6 +157,8 @@ the bundled test labels so you can compare builds on the same Mac. The command-l
 
 - **"Couldn't connect"**: check the IP on the printer's configuration label (Printer → Configuration Label, or hold
   FEED on the printer). On macOS 15+, allow Tearoff under System Settings → Privacy & Security → Local Network.
+- **USB Zebra not found**: turn it on, plug it straight into the Mac (or a powered hub) and click **Search Again**. If printing
+  says it isn't in your printer list, add it with the Setup Assistant or **Print Driver → Add Printer**.
 - **Garbled text instead of a label**: the printer is in EPL-only mode. Switch it to ZPL (or auto) in its web page or with
   Zebra Setup Utilities.
 - **Labels creep or skip**: run **Calibrate**, or set the label stock under Printer.

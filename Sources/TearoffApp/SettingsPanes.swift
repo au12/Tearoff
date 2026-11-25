@@ -8,52 +8,55 @@ import TearoffKit
 struct PrinterPane: View {
     @EnvironmentObject var model: AppModel
     @State private var hostField = ""
-    @State private var useQueue = false
+    @State private var connection: Connection = .network
     @State private var queueChoice = ""
+
+    enum Connection: Hashable { case network, usb, queue }
 
     var body: some View {
         Form {
             Section {
-                Picker("Connection", selection: $useQueue) {
-                    Text("Network").tag(false)
-                    Text("macOS print queue").tag(true)
+                Picker("Connection", selection: $connection) {
+                    Text("Network").tag(Connection.network)
+                    Text("USB").tag(Connection.usb)
+                    Text("macOS print queue").tag(Connection.queue)
                 }
                 .pickerStyle(.segmented)
 
-                if !useQueue {
+                switch connection {
+                case .network:
                     HStack {
                         TextField("IP address or hostname", text: $hostField, prompt: Text("10.0.10.50"))
                             .onSubmit(applyHost)
                         Button("Use", action: applyHost).disabled(hostField.trimmingCharacters(in: .whitespaces).isEmpty)
                     }
                     HStack(spacing: 10) {
-                        Button { model.scan() } label: { Label("Find Printers", systemImage: "dot.radiowaves.left.and.right") }
+                        Button { model.scan(usb: false) } label: { Label("Find Printers", systemImage: "dot.radiowaves.left.and.right") }
                             .disabled(model.scanning)
                         if model.scanning {
                             ProgressView().controlSize(.small)
                             Text("Looking for Zebras on your network…").foregroundStyle(.secondary)
                         }
                     }
-                    ForEach(model.discovered) { p in
-                        HStack {
-                            Image(systemName: p.isZebra ? "printer.fill" : "questionmark.circle")
-                                .foregroundStyle(p.isZebra ? Color.accentColor : Color.secondary)
-                            VStack(alignment: .leading) {
-                                Text(p.name).fontWeight(.medium)
-                                Text(p.detail).font(.caption).foregroundStyle(.secondary)
-                            }
-                            Spacer()
-                            if model.settings.printer == p.target {
-                                Label("In use", systemImage: "checkmark").foregroundStyle(.green).labelStyle(.titleAndIcon)
-                            } else {
-                                Button("Use") {
-                                    model.choose(p)
-                                    hostField = p.target.description
-                                }
-                            }
+                    ForEach(model.discovered.filter { !$0.isUSB }) { p in row(p) }
+                case .usb:
+                    HStack(spacing: 10) {
+                        Button { model.scan(network: false) } label: { Label("Find USB Printers", systemImage: "cable.connector") }
+                            .disabled(model.scanningUSB)
+                        if model.scanningUSB {
+                            ProgressView().controlSize(.small)
+                            Text("Looking for Zebras plugged into this Mac…").foregroundStyle(.secondary)
                         }
                     }
-                } else {
+                    let usb = model.discovered.filter { $0.isUSB }
+                    ForEach(usb) { p in row(p) }
+                    if usb.isEmpty && !model.scanningUSB {
+                        Text("No Zebra found on USB. Plug it into this Mac, turn it on, then click Find USB Printers.")
+                            .foregroundStyle(.secondary)
+                    }
+                    Text("Tearoff prints to a USB Zebra through your Mac’s printer list, so add it there once: Print Driver, in the sidebar, or the Setup Assistant.")
+                        .font(.caption).foregroundStyle(.secondary)
+                case .queue:
                     Picker("Queue", selection: $queueChoice) {
                         Text("Choose…").tag("")
                         ForEach(model.queues, id: \.name) { q in Text(q.name).tag(q.name) }
@@ -64,7 +67,7 @@ struct PrinterPane: View {
                             model.settings.printerName = q
                         }
                     }
-                    Text("For USB printers. Tearoff sends raw ZPL to the queue, so use a queue with the Tearoff driver (Print Driver, in the sidebar) or a raw/ZPL driver.")
+                    Text("For a printer already on your Mac’s printer list. Tearoff sends it raw ZPL, so use one with the Tearoff driver (Print Driver, in the sidebar) or a raw/ZPL driver.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
             } header: {
@@ -143,12 +146,16 @@ struct PrinterPane: View {
         .navigationTitle("Printer")
         .onAppear {
             switch model.settings.printer {
-            case .network(let h, let p)?: hostField = p == 9100 ? h : "\(h):\(p)"; useQueue = false
-            case .queue(let n)?: queueChoice = n; useQueue = true
+            case .network(let h, let p)?: hostField = p == 9100 ? h : "\(h):\(p)"; connection = .network
+            case .usb?: connection = .usb
+            case .queue(let n)?: queueChoice = n; connection = .queue
             case nil: break
             }
             if model.queues.isEmpty { model.refreshDriver() }
             if model.discovered.isEmpty && model.settings.printer == nil { model.scan() }
+        }
+        .onChange(of: connection) { c in
+            if c == .usb && !model.discovered.contains(where: { $0.isUSB }) { model.scan(network: false) }
         }
         .onChange(of: model.settings.printer) { p in
             if case .network(let h, let port)? = p { hostField = port == 9100 ? h : "\(h):\(port)" }
@@ -162,9 +169,27 @@ struct PrinterPane: View {
         .onChange(of: model.settings.darkness == nil) { _ in model.scheduleQueueSync() }
     }
 
-    var isNetwork: Bool {
-        if case .network? = model.settings.printer { return true }
-        return false
+    var isNetwork: Bool { model.settings.printer?.isNetwork ?? false }
+
+    func row(_ p: DiscoveredPrinter) -> some View {
+        HStack {
+            Image(systemName: p.isUSB ? "cable.connector" : (p.isZebra ? "printer.fill" : "questionmark.circle"))
+                .foregroundStyle(p.isZebra ? Color.accentColor : Color.secondary)
+                .frame(width: 18)
+            VStack(alignment: .leading) {
+                Text(p.name).fontWeight(.medium)
+                Text(p.detail).font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer()
+            if model.settings.printer == p.target {
+                Label("In use", systemImage: "checkmark").foregroundStyle(.green).labelStyle(.titleAndIcon)
+            } else {
+                Button("Use") {
+                    model.choose(p)
+                    if !p.isUSB { hostField = p.target.description }
+                }
+            }
+        }
     }
 
     var printerLabel: String {
@@ -224,9 +249,10 @@ struct DriverPane: View {
             Section("Add your Zebra as a printer") {
                 TextField("Name in the Print dialog", text: $displayName, prompt: Text("Zebra GX420d"))
                 LabeledContent("Connects to") {
-                    Text(deviceURI.isEmpty ? "Choose your printer first" : deviceURI)
+                    Text(deviceURI.isEmpty ? "Choose your printer first" : model.connectionText)
                         .foregroundStyle(deviceURI.isEmpty ? Color.orange : Color.primary)
                         .textSelection(.enabled)
+                        .help(deviceURI)
                 }
                 HStack {
                     Button(model.tearoffQueues.contains(queueName) ? "Update Printer…" : (model.driverInstalled ? "Add Printer" : "Install Driver & Add Printer…")) {

@@ -28,12 +28,14 @@ struct Toast: Identifiable, Equatable {
 
 enum PrinterHealth: Equatable {
     case unknown, checking, ready(String), problem(String), offline(String), queue(String)
+    /// Connected, with one setup step left (a USB printer that isn't on the Mac's printer list yet).
+    case needsSetup(String)
 
     var text: String {
         switch self {
         case .unknown: return "No printer"
         case .checking: return "Checking…"
-        case .ready(let s), .problem(let s), .offline(let s), .queue(let s): return s
+        case .ready(let s), .problem(let s), .offline(let s), .queue(let s), .needsSetup(let s): return s
         }
     }
 }
@@ -50,7 +52,10 @@ final class AppModel: ObservableObject {
         didSet {
             guard settings != oldValue else { return }
             if persist { settings.save() }
-            if settings.printer != oldValue.printer { refreshStatus() }
+            if settings.printer != oldValue.printer {
+                identity = nil
+                refreshStatus()
+            }
             if settings.watchDownloads != oldValue.watchDownloads { updateWatcher() }
         }
     }
@@ -61,7 +66,10 @@ final class AppModel: ObservableObject {
     @Published var identity: ZebraIdentity?
     @Published var discovered: [DiscoveredPrinter] = []
     @Published var queues: [QueueInfo] = []
+    /// Looking for printers on the network / plugged in by USB.
     @Published var scanning = false
+    @Published var scanningUSB = false
+    var searching: Bool { scanning || scanningUSB }
     @Published var driverInstalled = Driver.isInstalled
     @Published var driverOutdated = false
     @Published var tearoffQueues: [String] = []
@@ -181,10 +189,8 @@ final class AppModel: ObservableObject {
         net.async { [weak self] in
             var err: String? = nil
             do { try trace.measure("send") { try ZebraPrinter.send(job, to: target) } } catch { err = error.localizedDescription }
-            var kind = "queue"
-            if case .network = target { kind = "network" }
             PerfLog.append(PerfLog.record(op: "print", source: "app", trace: trace, extra: [
-                "labels": labels.count, "copies": copies, "bytes": job.utf8.count, "target": kind, "error": err ?? "",
+                "labels": labels.count, "copies": copies, "bytes": job.utf8.count, "target": target.kind, "error": err ?? "",
             ]))
             DispatchQueue.main.async {
                 guard let self = self else { return }
@@ -242,10 +248,45 @@ final class AppModel: ObservableObject {
     func refreshStatus(quiet: Bool = false) {
         if demo { return }
         guard let target = settings.printer else { health = .unknown; return }
-        guard case .network(let host, let port) = target else {
-            health = .queue("macOS queue “\(target.description)”")
-            return
+        switch target {
+        case .network(let host, let port):
+            refreshNetworkStatus(host: host, port: port, quiet: quiet)
+        case .usb(let uri):
+            refreshUSBStatus(uri: uri, quiet: quiet)
+        case .queue(let name):
+            // a queue that prints to a USB Zebra: at least say whether it's plugged in
+            if let uri = queues.first(where: { $0.name == name })?.uri, uri.hasPrefix("usb:") {
+                refreshUSBStatus(uri: uri, quiet: quiet)
+            } else {
+                health = .queue("macOS queue “\(name)”")
+            }
         }
+    }
+
+    /// USB can't report paper or head problems the way the network does, but it can say whether
+    /// the printer is plugged in and switched on, and whether the Mac has a printer for it yet.
+    private func refreshUSBStatus(uri: String, quiet: Bool) {
+        if !quiet { health = .checking }
+        net.async { [weak self] in
+            let trace = PerfTrace()
+            let connected = trace.measure("usb_presence") { USBPrinters.isConnected(uri: uri) }
+            let added = trace.measure("queues") { Discovery.queues().contains { USBDevices.sameDevice($0.uri, uri) } }
+            if trace.elapsedMs > 800 {
+                PerfLog.append(PerfLog.record(op: "status", source: "app", trace: trace, extra: ["target": "usb"]))
+            }
+            let h: PrinterHealth
+            if !connected {
+                h = .offline("Not connected (USB)")
+            } else if !added {
+                h = .needsSetup("Connected by USB · not added to your Mac yet")
+            } else {
+                h = .ready("Connected by USB")
+            }
+            DispatchQueue.main.async { self?.health = h }
+        }
+    }
+
+    private func refreshNetworkStatus(host: String, port: Int, quiet: Bool) {
         if !quiet { health = .checking }
         net.async { [weak self] in
             var h: PrinterHealth
@@ -271,21 +312,39 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func scan() {
+    /// Looks for Zebras plugged in by USB (quick) and printers on the network (a few seconds), side by side.
+    func scan(network: Bool = true, usb: Bool = true) {
         if demo { return }
-        scanning = true
-        net.async { [weak self] in
-            let trace = PerfTrace()
-            let found = trace.measure("scan") { Discovery.scan() }
-            let qs = Discovery.queues()
-            PerfLog.append(PerfLog.record(op: "discover", source: "app", trace: trace, extra: [
-                "found": found.count, "zebras": found.filter { $0.isZebra }.count,
-            ]))
-            DispatchQueue.main.async {
-                guard let self = self, !self.demo else { return }
-                self.discovered = found
-                self.queues = qs
-                self.scanning = false
+        if usb && !scanningUSB {
+            scanningUSB = true
+            DispatchQueue.global(qos: .utility).async { [weak self] in
+                let trace = PerfTrace()
+                let found = trace.measure("usb") { Discovery.usbPrinters() }
+                PerfLog.append(PerfLog.record(op: "discover", source: "app", trace: trace, extra: [
+                    "via": "usb", "found": found.count, "zebras": found.filter { $0.isZebra }.count,
+                ]))
+                DispatchQueue.main.async {
+                    guard let self = self, !self.demo else { return }
+                    self.discovered = found + self.discovered.filter { !$0.isUSB }
+                    self.scanningUSB = false
+                }
+            }
+        }
+        if network && !scanning {
+            scanning = true
+            net.async { [weak self] in
+                let trace = PerfTrace()
+                let found = trace.measure("scan") { Discovery.scan() }
+                let qs = Discovery.queues()
+                PerfLog.append(PerfLog.record(op: "discover", source: "app", trace: trace, extra: [
+                    "via": "network", "found": found.count, "zebras": found.filter { $0.isZebra }.count,
+                ]))
+                DispatchQueue.main.async {
+                    guard let self = self, !self.demo else { return }
+                    self.discovered = self.discovered.filter { $0.isUSB } + found
+                    self.queues = qs
+                    self.scanning = false
+                }
             }
         }
     }
@@ -325,9 +384,12 @@ final class AppModel: ObservableObject {
             let all = Discovery.queues()
             let outdated = bundled.map { Driver.isOutdated(comparedTo: $0) } ?? false
             DispatchQueue.main.async {
-                self?.tearoffQueues = qs
-                self?.queues = all
-                self?.driverOutdated = outdated
+                guard let self = self else { return }
+                self.tearoffQueues = qs
+                self.queues = all
+                self.driverOutdated = outdated
+                // USB status depends on the printer list (has the Mac got a printer for it yet?)
+                if let t = self.settings.printer, !t.isNetwork { self.refreshStatus(quiet: true) }
             }
         }
     }
@@ -532,7 +594,9 @@ final class AppModel: ObservableObject {
         settings.printerName = "Zebra GX420d"
         health = .ready("Ready")
         identity = ZebraIdentity.parse("\u{02}GX420d-200dpi,V61.17.17Z,8,8192KB\u{03}")
-        discovered = [DiscoveredPrinter(target: .network(host: "10.0.10.50", port: 9100), name: "GX420d-200dpi",
+        discovered = [DiscoveredPrinter(target: .usb(uri: "usb://Zebra%20Technologies/ZTC%20ZD421-203dpi%20ZPL?serial=D2J213901234"),
+                                        name: "ZD421-203dpi", detail: "Connected by USB · serial D2J213901234", isZebra: true, dpi: 203),
+                      DiscoveredPrinter(target: .network(host: "10.0.10.50", port: 9100), name: "GX420d-200dpi",
                                         detail: "10.0.10.50 · firmware V61.17.17Z", isZebra: true, dpi: 203),
                       DiscoveredPrinter(target: .network(host: "10.0.10.31", port: 9100), name: "Office printer",
                                         detail: "10.0.10.31 · port 9100", isZebra: false, dpi: nil)]
@@ -607,8 +671,16 @@ extension AppModel {
         switch settings.printer {
         case .network(let h, let p)?: return "socket://\(h):\(p)"
         case .queue(let n)?: return queues.first(where: { $0.name == n })?.uri ?? ""
+        case .usb(let u)?: return u
         case nil: return ""
         }
+    }
+
+    /// Where the Mac printer will connect, for people: "socket://10.0.10.50:9100", "GX420d over USB · serial 28J…".
+    var connectionText: String {
+        guard case .usb(let u)? = settings.printer else { return deviceURI }
+        let info = USBPrinterInfo(uri: u)
+        return "\(info.displayName) over USB" + (info.serial.map { " · serial \($0)" } ?? "")
     }
 
     /// Uses a typed address or hostname as the printer. False if it doesn't parse.

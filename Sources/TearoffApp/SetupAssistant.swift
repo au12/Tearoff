@@ -223,7 +223,7 @@ struct WelcomeStep: View {
             Text("Setup takes about a minute:").font(.headline).padding(.top, 8)
             VStack(alignment: .leading, spacing: 18) {
                 WelcomeRow(icon: "dot.radiowaves.left.and.right", title: "Find your Zebra",
-                           detail: "Tearoff looks for it on your network.")
+                           detail: "Plugged in by USB or on your network: Tearoff looks for it.")
                 WelcomeRow(icon: "plus.rectangle.on.rectangle", title: "Add it to your Mac",
                            detail: "So it’s in the Print dialog of every app.")
                 WelcomeRow(icon: "printer", title: "Print a test label",
@@ -267,24 +267,24 @@ struct FindStep: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             StepHeader(title: "Find your Zebra",
-                       text: "Turn the printer on and connect it to the same network as this Mac, by Ethernet or Wi-Fi. Tearoff looks for it automatically.")
+                       text: "Turn the printer on and plug it into this Mac by USB, or connect it to the same network by Ethernet or Wi-Fi. Tearoff looks for it automatically.")
             HStack(spacing: 10) {
-                if model.scanning {
+                if model.searching {
                     ProgressView().controlSize(.small)
-                    Text("Searching your network…").foregroundColor(.secondary)
+                    Text("Searching USB and your network…").foregroundColor(.secondary)
                 } else {
                     Text(summary).foregroundColor(.secondary)
                 }
                 Spacer()
                 Button { model.scan() } label: { Label("Search Again", systemImage: "arrow.clockwise") }
-                    .disabled(model.scanning)
+                    .disabled(model.searching)
             }
             ScrollView {
                 VStack(spacing: 8) {
                     ForEach(printers) { p in
                         PrinterRow(printer: p, selected: model.settings.printer == p.target) { model.choose(p) }
                     }
-                    if printers.isEmpty && !model.scanning { NotFoundHelp() }
+                    if printers.isEmpty && !model.searching { NotFoundHelp() }
                 }
             }
             .frame(maxHeight: 210)
@@ -309,13 +309,13 @@ struct FindStep: View {
         }
         .padding(40)
         .onAppear {
-            if model.discovered.isEmpty && !model.scanning { model.scan() }
+            if model.discovered.isEmpty && !model.searching { model.scan() }
             if case .network(let h, _)? = model.settings.printer { host = h }
         }
-        .onChange(of: model.discovered) { found in
-            // one Zebra on the network and none chosen yet: that's the one
-            let zebras = found.filter { $0.isZebra }
-            if model.settings.printer == nil, zebras.count == 1 { model.choose(zebras[0]) }
+        .onChange(of: model.searching) { searching in
+            // done looking, exactly one Zebra and none chosen yet: that's the one
+            let zebras = model.discovered.filter { $0.isZebra }
+            if !searching, model.settings.printer == nil, zebras.count == 1 { model.choose(zebras[0]) }
         }
     }
 
@@ -346,7 +346,7 @@ struct PrinterRow: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: 12) {
-                Image(systemName: printer.isZebra ? "printer.fill" : "printer")
+                Image(systemName: printer.isUSB ? "cable.connector" : (printer.isZebra ? "printer.fill" : "printer"))
                     .font(.title2)
                     .foregroundColor(printer.isZebra ? .accentColor : .secondary)
                     .frame(width: 34)
@@ -375,8 +375,8 @@ struct NotFoundHelp: View {
         VStack(alignment: .leading, spacing: 6) {
             Label("No Zebra found yet", systemImage: "magnifyingglass").font(.headline)
             Text("• Is the printer on, with a solid green light?")
-            Text("• Is its network cable plugged in, or is it on your Wi-Fi?")
-            Text("• Is this Mac on the same network?")
+            Text("• By USB: is the cable firmly in this Mac (or its hub) and the printer?")
+            Text("• On the network: is its cable plugged in, or is it on your Wi-Fi? Is this Mac on the same network?")
             Text("To find its IP address, hold the Feed button until the light flashes once, then let go: it prints its settings.")
                 .foregroundColor(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -429,9 +429,10 @@ struct AddStep: View {
                     }
                     GridRow {
                         Text("Connects to").foregroundColor(.secondary)
-                        Text(model.deviceURI.isEmpty ? "Go back and choose your printer" : model.deviceURI)
+                        Text(model.deviceURI.isEmpty ? "Go back and choose your printer" : model.connectionText)
                             .foregroundColor(model.deviceURI.isEmpty ? .orange : .primary)
                             .textSelection(.enabled)
+                            .help(model.deviceURI)
                     }
                 }
                 HStack(spacing: 12) {
@@ -621,7 +622,7 @@ struct TestStep: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text("• The light should be solid green. Red or flashing: open the cover, reseat the labels and close it firmly.")
                 Text("• Press Feed once. A blank label should come out.")
-                Text("• Still nothing? Go Back and choose the printer again; its address may have changed.")
+                Text("• Still nothing? Go Back and search again: a network printer’s address may have changed, or a USB cable may have come loose.")
             }
             .foregroundColor(.secondary)
             .fixedSize(horizontal: false, vertical: true)

@@ -10,7 +10,12 @@ public struct QueueInfo: Identifiable, Hashable {
 }
 
 public struct DiscoveredPrinter: Identifiable, Hashable {
-    public var id: String { target.description }
+    public var id: String {
+        if case .usb(let uri) = target { return uri }
+        return target.description
+    }
+    /// Plugged in by USB (not on the network).
+    public var isUSB: Bool { target.isUSB }
     public var target: PrinterTarget
     public var name: String
     public var detail: String
@@ -161,6 +166,22 @@ public enum Discovery {
             lock.lock(); found.append(p); lock.unlock()
         }
         return found.sorted { ($0.isZebra ? 0 : 1, $0.name) < ($1.isZebra ? 0 : 1, $1.name) }
+    }
+
+    /// Zebras plugged in by USB. Blocking (lpinfo can take a few seconds): call off the main thread.
+    public static func usbPrinters() -> [DiscoveredPrinter] {
+        let queues = Self.queues()
+        return USBPrinters.list().filter { $0.isZebra }.map { info in
+            let zpl = info.speaksZPL
+            var detail = "Connected by USB"
+            if let s = info.serial { detail += " · serial \(s)" }
+            if let q = queues.first(where: { USBDevices.sameDevice($0.uri, info.uri) }) {
+                detail += " · on this Mac as “\(q.name.replacingOccurrences(of: "_", with: " "))”"
+            }
+            if zpl == false { detail += " · speaks EPL only; Tearoff needs ZPL" }
+            return DiscoveredPrinter(target: .usb(uri: info.uri), name: info.displayName, detail: detail,
+                                     isZebra: zpl != false, dpi: info.dpi)
+        }
     }
 
     /// Existing macOS print queues ("device for NAME: URI").

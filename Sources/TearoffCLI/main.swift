@@ -8,11 +8,11 @@ let usage = """
 tearoff \(version) — crisp Zebra labels from PDFs
 
   tearoff print FILE…        find the label(s) and print them
-          [--printer HOST[:PORT] | --queue NAME] [--copies N]
+          [--printer HOST[:PORT] | --printer usb://… | --queue NAME] [--copies N]
   tearoff extract FILE…      save labels as PNGs [--out DIR] [--json]
   tearoff zpl FILE           write ZPL to stdout [--out FILE] [--copies N]
-  tearoff status             printer status [--printer HOST]
-  tearoff discover           find Zebra printers on this network
+  tearoff status             printer status [--printer HOST | --printer usb://…]
+  tearoff discover           find Zebra printers plugged in by USB or on this network [--usb: USB only]
   tearoff test-label         print a printer-rendered test label
   tearoff calibrate          calibrate the media sensor
   tearoff zpl2png FILE OUT   render ^GFA graphics in a ZPL file to OUT-N.png
@@ -41,6 +41,7 @@ var copies = 1
 var wholePages = false
 var target = settings.printer
 var runs = 3
+var usbOnly = false
 
 var i = 0
 func value() -> String {
@@ -71,6 +72,7 @@ while i < args.count {
         }
     case "--printer": target = PrinterTarget(string: value())
     case "--queue": target = .queue(name: value())
+    case "--usb": usbOnly = true
     case "-h", "--help": print(usage); exit(0)
     default: files.append(a)
     }
@@ -148,7 +150,7 @@ case "print":
             try trace.measure("send") { try ZebraPrinter.send(job, to: t, title: URL(fileURLWithPath: f).lastPathComponent) }
             PerfLog.appendNow(PerfLog.record(op: "print", source: "cli", trace: trace, extra: [
                 "labels": found.count, "copies": copies, "bytes": job.utf8.count,
-                "target": { if case .network = t { return "network" } else { return "queue" } }(),
+                "target": t.kind,
             ]))
             print("\(f): sent \(found.count) label\(found.count == 1 ? "" : "s") to \(t)")
         } catch {
@@ -157,6 +159,15 @@ case "print":
     }
 
 case "status":
+    if case .usb(let uri)? = target {
+        // USB can say whether it's plugged in, and which Mac printer feeds it
+        let connected = USBPrinters.isConnected(uri: uri)
+        let queue = ZebraPrinter.queue(forUSB: uri)
+        print("\(USBPrinterInfo(uri: uri).displayName) over USB: \(connected ? "connected" : "not connected")")
+        print(queue.map { "Prints through the macOS queue “\($0.name)”" }
+              ?? "Not on this Mac’s printer list yet: add it in the Tearoff app (Tearoff ▸ Setup Assistant)")
+        exit(connected && queue != nil ? 0 : 1)
+    }
     let (h, p) = requireHost()
     do {
         if let id = try? ZebraPrinter.identity(host: h, port: p) {
@@ -169,10 +180,13 @@ case "status":
     }
 
 case "discover":
-    let found = Discovery.scan()
-    if found.isEmpty { print("No printers answered on port 9100.") }
-    for p in found {
-        print("\(p.isZebra ? "✓" : "?") \(p.target)  \(p.name)  \(p.detail)\(p.dpi.map { "  \($0) dpi" } ?? "")")
+    // the first column is what --printer takes
+    let usb = Discovery.usbPrinters()
+    if usb.isEmpty { print("No Zebra plugged in by USB.") }
+    let found = usbOnly ? [] : Discovery.scan()
+    if !usbOnly && found.isEmpty { print("No printers answered on port 9100.") }
+    for p in usb + found {
+        print("\(p.isZebra ? "✓" : "?") \(p.id)  \(p.name)  \(p.detail)\(p.dpi.map { "  \($0) dpi" } ?? "")")
     }
     for q in Discovery.queues() { print("  queue:\(q.name)  \(q.uri)") }
 
