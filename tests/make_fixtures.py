@@ -30,6 +30,8 @@ POSTAL = "420627019205"
 USPS_TRACK = "9400111899223197428490"
 SLIP = "RmaSLIP42x"
 QR_RETURN = "https://www.example.com/returns/qr/R7XK2QP9"
+SAMPLE_SLIP = "TearoffDemo1"
+SAMPLE_QR = "https://github.com/au12/Tearoff"
 # extra codes print on their own label, best fit; wide ones lie on their side (read bottom to top)
 SLIP_EXTRA = {"barcodes": [SLIP], "kind": "barcode", "orientation": -90}
 RECEIPT_EXTRA = {"barcodes": ["RECEIPT0001"], "kind": "barcode", "orientation": -90}
@@ -390,6 +392,40 @@ def fx_label_with_side_codes(path):
                        {"barcodes": ["ORDER-5521-B"], "kind": "barcode", "orientation": -90}]}
 
 
+def fx_sample_return(path):
+    """The page the Setup Assistant opens in Preview so people can try Command-P for real: a return
+    label in a dashed cut line, a return-slip barcode and a drop-off QR code. Exactly three labels
+    come out (shipped inside the app as "Sample Return.pdf")."""
+    c = canvas.Canvas(path, pagesize=LETTER)
+    W, H = LETTER
+    c.setFont("Helvetica-Bold", 18); c.drawString(36, H - 54, "Sample return")
+    c.setFont("Helvetica", 9); c.setFillColorRGB(0.35, 0.35, 0.35)
+    c.drawString(36, H - 72, "A Tearoff sample page. Press Command-P, choose your Zebra and click Print. Tearoff prints the shipping")
+    c.drawString(36, H - 84, "label, the return barcode and the QR code, each on its own 4\u00d76 label, and skips everything else.")
+    c.setFillColorRGB(0, 0, 0)
+    c.setFont("Helvetica-Bold", 11); c.drawString(36, H - 112, "Return Mailing Label")
+    c.setFont("Helvetica", 9); c.drawString(36, H - 128, "Cut this label and affix it to the outside of the return package")
+    im = label_png(300, landscape_ccw=True)               # 1800 x 1200, like a carrier's return page
+    x, w, h = 94.8, 373.65, 240.66
+    y = H - 140 - h
+    dashed_rect(c, x - 1.6, y - 1.6, w + 3.2, h + 3.2)
+    c.drawImage(img_reader(im), x, y, w, h)
+    top = y - 30
+    c.setFont("Helvetica-Bold", 11); c.drawString(36, top, "Return Authorization Slip")
+    c.setFont("Helvetica", 9); c.drawString(36, top - 16, "Place this barcode inside your return package.")
+    c.drawImage(img_reader(code128_image(SAMPLE_SLIP, hri_above=True)), 60, top - 100, 227.5, 65.8)
+    qs, qx = 1.1 * IN, 400
+    c.setFont("Helvetica-Bold", 11); c.drawString(qx - 8, top, "Drop-off code")
+    draw_qr(c, SAMPLE_QR, qx, top - 24, qs)
+    c.setFont("Helvetica", 8); c.drawCentredString(qx + qs / 2, top - 24 - qs - 11, "SHOW AT DROP-OFF")
+    c.setFont("Helvetica-Bold", 9); c.drawString(40, top - 156, "Item Descriptions")
+    c.setFont("Helvetica", 9); c.drawString(40, top - 172, "Sample item | Blue | Size M | Qty 1")
+    c.showPage(); c.save()
+    return {"labels": [{"barcodes": [UPS_TRACK, POSTAL], "source": "image"},
+                       {"barcodes": [SAMPLE_SLIP], "kind": "barcode", "orientation": -90},
+                       {"barcodes": [SAMPLE_QR], "kind": "qr", "orientation": 0}]}
+
+
 def main():
     os.makedirs(OUT, exist_ok=True)
     expected = {}
@@ -407,6 +443,7 @@ def main():
         ("12_photo_and_label.pdf", fx_photo_and_label),
         ("14_qr_return_no_label.pdf", fx_qr_return_no_label),
         ("15_label_with_side_codes.pdf", fx_label_with_side_codes),
+        ("16_sample_return.pdf", fx_sample_return),
     ]
     for name, fn in fx:
         expected[name] = fn(os.path.join(OUT, name))

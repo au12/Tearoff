@@ -48,6 +48,8 @@ fi
 # synthetic label PDFs for Diagnostics › Run Benchmark and `tearoff bench`
 mkdir -p "$APP/Contents/Resources/Benchmark"
 cp tests/fixtures/*.pdf "$APP/Contents/Resources/Benchmark/"
+# the sample return page the Setup Assistant opens in Preview (fixture 16, checked by CI)
+cp tests/fixtures/16_sample_return.pdf "$APP/Contents/Resources/Sample Return.pdf"
 
 echo "→ Building icon…"
 ICONSET="$(mktemp -d)/AppIcon.iconset"

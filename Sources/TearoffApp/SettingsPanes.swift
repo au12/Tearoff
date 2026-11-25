@@ -69,6 +69,9 @@ struct PrinterPane: View {
                 }
             } header: {
                 Text("Your Zebra")
+            } footer: {
+                Button("Run the Setup Assistant…") { AppDelegate.shared?.showSetupAssistant() }
+                    .buttonStyle(.link)
             }
 
             Section("Status") {
@@ -169,14 +172,7 @@ struct PrinterPane: View {
         return model.settings.printerName.isEmpty ? p.description : "\(model.settings.printerName) (\(p.description))"
     }
 
-    func applyHost() {
-        guard let t = PrinterTarget(string: hostField) else { return }
-        model.settings.printer = t
-        if model.settings.printerName.isEmpty || PrinterTarget(string: model.settings.printerName) != nil {
-            model.settings.printerName = t.description
-        }
-        model.detectResolution()
-    }
+    func applyHost() { model.useHost(hostField) }
 
     var stockBinding: Binding<String> {
         Binding(get: { Driver.stockName(for: model.settings.labelSize) },
@@ -298,24 +294,12 @@ struct DriverPane: View {
         }
     }
 
-    var suggestedName: String {
-        let n = model.identity?.model ?? model.settings.printerName
-        let base = n.replacingOccurrences(of: #"-\d{3}dpi"#, with: "", options: .regularExpression)
-        let looksLikeAddress = base.allSatisfy { $0.isNumber || $0 == "." || $0 == ":" }
-        if base.isEmpty || looksLikeAddress { return "Zebra Label Printer" }
-        return base.lowercased().hasPrefix("zebra") ? base : "Zebra \(base)"
-    }
+    var suggestedName: String { model.suggestedPrinterName }
 
     var effectiveName: String { displayName.trimmingCharacters(in: .whitespaces).isEmpty ? suggestedName : displayName }
     var queueName: String { Driver.queueName(for: effectiveName) }
 
-    var deviceURI: String {
-        switch model.settings.printer {
-        case .network(let h, let p)?: return "socket://\(h):\(p)"
-        case .queue(let n)?: return model.queues.first(where: { $0.name == n })?.uri ?? ""
-        case nil: return ""
-        }
-    }
+    var deviceURI: String { model.deviceURI }
 
     func step(_ n: Int, _ text: String) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 10) {

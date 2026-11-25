@@ -19,6 +19,7 @@ struct TearoffApp: App {
         .commands {
             CommandGroup(replacing: .appSettings) {
                 Button("Settings…") { AppDelegate.shared?.showMainWindow(pane: .printer) }.keyboardShortcut(",")
+                Button("Setup Assistant…") { AppDelegate.shared?.showSetupAssistant() }
             }
             CommandGroup(replacing: .newItem) {
                 Button("Open…") {
@@ -54,6 +55,7 @@ struct MenuBarContent: View {
             Button("Print “\(d.name)”") { model.printDocument(d.id) }
         }
         Toggle("Watch Downloads for Labels", isOn: $model.settings.watchDownloads)
+        Button("Setup Assistant…") { AppDelegate.shared?.showSetupAssistant() }
         Divider()
         Button("Quit Tearoff") { NSApp.terminate(nil) }.keyboardShortcut("q")
     }
@@ -62,6 +64,7 @@ struct MenuBarContent: View {
 final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate, NSWindowDelegate {
     static weak var shared: AppDelegate?
     var mainWindow: NSWindow?
+    var setupWindow: NSWindow?
     private let launchedAt = ProcessInfo.processInfo.systemUptime
 
     override init() {
@@ -71,22 +74,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let a = CommandLine.arguments
+        // CI: render the Setup Assistant's animation to PNG frames, then quit
+        if let i = a.firstIndex(of: "--render-pluck"), i + 1 < a.count {
+            let dir = URL(fileURLWithPath: a[i + 1])
+            Task { @MainActor in
+                PluckFrames.render(to: dir)
+                NSApp.terminate(nil)
+            }
+            return
+        }
         if let i = a.firstIndex(of: "--demo") {
             var files: [URL] = []
             var pane = Pane.labels
+            var setup: SetupStep? = nil
             var j = i + 1
             while j < a.count {
                 if a[j] == "--pane", j + 1 < a.count { pane = Pane(rawValue: a[j + 1]) ?? .labels; j += 2; continue }
+                if a[j] == "--setup", j + 1 < a.count { setup = SetupStep(name: a[j + 1]); j += 2; continue }
+                if a[j] == "--pluck-time", j + 1 < a.count { PluckAnimationView.frozenOverride = Double(a[j + 1]); j += 2; continue }
                 files.append(URL(fileURLWithPath: a[j]))
                 j += 1
             }
             showMainWindow()
-            AppModel.shared.startDemo(files: files, pane: pane)
+            AppModel.shared.startDemo(files: files, pane: pane, captureMain: setup == nil)
+            if let step = setup {
+                SetupAssistant.demoTestSent = step == .test
+                showSetupAssistant(step: step)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+                    guard let w = self.setupWindow else { return }
+                    let path = ProcessInfo.processInfo.environment["TEAROFF_WINDOW_ID_FILE"] ?? "/tmp/tearoff-window-id"
+                    try? String(w.windowNumber).write(toFile: path, atomically: true, encoding: .utf8)
+                }
+            }
             return
         }
         UNUserNotificationCenter.current().delegate = self
         AppModel.shared.start()
         showMainWindow()
+        if !AppModel.shared.settings.setupDone || a.contains("--setup") { showSetupAssistant() }
         DispatchQueue.main.async {
             let ms = (ProcessInfo.processInfo.systemUptime - self.launchedAt) * 1000
             PerfLog.append(PerfLog.record(op: "launch", source: "app", ms: ms))
@@ -121,6 +146,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         if let p = pane { AppModel.shared.requestedPane = p }
         NSApp.activate(ignoringOtherApps: true)
         mainWindow?.makeKeyAndOrderFront(nil)
+    }
+
+    /// Shows the Setup Assistant (a fresh one, at `step`, unless it's already open).
+    func showSetupAssistant(step: SetupStep = .welcome) {
+        if setupWindow == nil {
+            let view = SetupAssistant(step: step) { [weak self] in self?.finishSetup() }
+                .environmentObject(AppModel.shared)
+            let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 640),
+                             styleMask: [.titled, .closable, .miniaturizable, .fullSizeContentView],
+                             backing: .buffered, defer: false)
+            w.title = "Tearoff Setup"
+            w.titlebarAppearsTransparent = true
+            w.titleVisibility = .hidden
+            w.isMovableByWindowBackground = true
+            w.contentView = NSHostingView(rootView: view)
+            w.isReleasedWhenClosed = false
+            w.delegate = self
+            w.center()
+            setupWindow = w
+        }
+        NSApp.activate(ignoringOtherApps: true)
+        setupWindow?.makeKeyAndOrderFront(nil)
+    }
+
+    func finishSetup() {
+        setupWindow?.close()
+        showMainWindow()
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        guard let w = notification.object as? NSWindow, w === setupWindow else { return }
+        // finished or closed: it won't open by itself again (Tearoff ▸ Setup Assistant… still does)
+        if !AppModel.shared.demo { AppModel.shared.settings.setupDone = true }
+        setupWindow = nil
     }
 
     func application(_ sender: NSApplication, open urls: [URL]) {

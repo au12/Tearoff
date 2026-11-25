@@ -201,8 +201,17 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func printerCommand(_ what: String) {
-        guard let target = settings.printer else { show("Choose your printer first.", error: true); return }
+    /// Test label, calibrate, feed or configuration label. `completion` gets an error message or nil.
+    func printerCommand(_ what: String, completion: ((String?) -> Void)? = nil) {
+        if demo {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { completion?(nil) }
+            return
+        }
+        guard let target = settings.printer else {
+            show("Choose your printer first.", error: true)
+            completion?("Choose your printer first.")
+            return
+        }
         let (w, h) = settings.labelSize.dots(dpi: settings.dpi)
         let dpi = settings.dpi
         net.async { [weak self] in
@@ -221,7 +230,9 @@ final class AppModel: ObservableObject {
                     let done = ["test": "Test label sent", "calibrate": "Calibrating — the printer will feed a few labels",
                                 "feed": "Fed one label", "config": "Printing the configuration label"]
                     self?.show(done[what] ?? "Done")
+                    if what == "test" { DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { self?.refreshStatus(quiet: true) } }
                 }
+                completion?(err)
             }
         }
     }
@@ -513,7 +524,7 @@ final class AppModel: ObservableObject {
     // MARK: Demo (README screenshots)
 
     /// `Tearoff --demo [--pane printer] FILE…` shows the UI with a pretend printer.
-    func startDemo(files: [URL], pane: Pane) {
+    func startDemo(files: [URL], pane: Pane, captureMain: Bool = true) {
         demo = true
         persist = false
         settings.printer = .network(host: "10.0.10.50", port: 9100)
@@ -521,9 +532,13 @@ final class AppModel: ObservableObject {
         health = .ready("Ready")
         identity = ZebraIdentity.parse("\u{02}GX420d-200dpi,V61.17.17Z,8,8192KB\u{03}")
         discovered = [DiscoveredPrinter(target: .network(host: "10.0.10.50", port: 9100), name: "GX420d-200dpi",
-                                        detail: "10.0.10.50 · firmware V61.17.17Z", isZebra: true, dpi: 203)]
+                                        detail: "10.0.10.50 · firmware V61.17.17Z", isZebra: true, dpi: 203),
+                      DiscoveredPrinter(target: .network(host: "10.0.10.31", port: 9100), name: "Office printer",
+                                        detail: "10.0.10.31 · port 9100", isZebra: false, dpi: nil)]
+        tearoffQueues = []
         requestedPane = pane
         if !files.isEmpty { open(files, autoPrint: false) }
+        guard captureMain else { return }
         // let CI capture just this window: write its CGWindowID where the screenshot script looks
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
             guard let w = AppDelegate.shared?.mainWindow else { return }
@@ -572,6 +587,83 @@ final class AppModel: ObservableObject {
 
 extension Notification.Name {
     static let showPrinterSetup = Notification.Name("tearoff.showPrinterSetup")
+}
+
+// MARK: - Setup helpers
+
+extension AppModel {
+    /// Name for the Mac printer, from the printer's model ("Zebra GX420d").
+    var suggestedPrinterName: String {
+        let n = identity?.model ?? settings.printerName
+        let base = n.replacingOccurrences(of: #"-\d{3}dpi"#, with: "", options: .regularExpression)
+        let looksLikeAddress = base.allSatisfy { $0.isNumber || $0 == "." || $0 == ":" }
+        if base.isEmpty || looksLikeAddress { return "Zebra Label Printer" }
+        return base.lowercased().hasPrefix("zebra") ? base : "Zebra \(base)"
+    }
+
+    /// CUPS device URI for the chosen printer.
+    var deviceURI: String {
+        switch settings.printer {
+        case .network(let h, let p)?: return "socket://\(h):\(p)"
+        case .queue(let n)?: return queues.first(where: { $0.name == n })?.uri ?? ""
+        case nil: return ""
+        }
+    }
+
+    /// Uses a typed address or hostname as the printer. False if it doesn't parse.
+    @discardableResult
+    func useHost(_ text: String) -> Bool {
+        guard let t = PrinterTarget(string: text.trimmingCharacters(in: .whitespaces)) else { return false }
+        settings.printer = t
+        if settings.printerName.isEmpty || PrinterTarget(string: settings.printerName) != nil {
+            settings.printerName = t.description
+        }
+        detectResolution()
+        return true
+    }
+
+    /// A Mac printer using the Tearoff driver exists.
+    var printerAdded: Bool { !tearoffQueues.isEmpty }
+
+    /// How the Tearoff printer appears in Print dialogs (queue names use _ for spaces).
+    var addedPrinterName: String? {
+        let q = settings.installedQueue.flatMap { tearoffQueues.contains($0) ? $0 : nil } ?? tearoffQueues.first
+        return q?.replacingOccurrences(of: "_", with: " ")
+    }
+
+    /// Adds the chosen Zebra as a Mac printer using the Tearoff driver.
+    func addPrinter(displayName: String) {
+        let queue = Driver.queueName(for: displayName)
+        if demo {
+            tearoffQueues = [queue]
+            show("Added. Choose “\(displayName)” in any Print dialog.")
+            return
+        }
+        installDriver(queueName: queue, displayName: displayName, uri: deviceURI, convert: [])
+        // show it as added straight away; refreshDriver() confirms from CUPS a moment later
+        if alert == nil && !tearoffQueues.contains(queue) { tearoffQueues.append(queue) }
+    }
+
+    /// The sample return page (a label, a return barcode and a QR code) shipped in the app.
+    var sampleURL: URL? { Bundle.main.url(forResource: "Sample Return", withExtension: "pdf") }
+
+    /// Opens the sample in Preview, to try ⌘P for real.
+    func openSample() {
+        guard let url = sampleURL else {
+            show("This copy of Tearoff is missing its sample page.", error: true)
+            return
+        }
+        // a copy in a temp folder: Preview shows a friendly name and nothing touches the app bundle
+        let copy = FileManager.default.temporaryDirectory.appendingPathComponent("Tearoff Sample Return.pdf")
+        try? FileManager.default.removeItem(at: copy)
+        let file = (try? FileManager.default.copyItem(at: url, to: copy)) != nil ? copy : url
+        if let preview = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.Preview") {
+            NSWorkspace.shared.open([file], withApplicationAt: preview, configuration: NSWorkspace.OpenConfiguration(),
+                                    completionHandler: nil)
+        } else {
+            NSWorkspace.shared.open(file)
+        }
+    }
 }
 
 /// Local notifications with a Print button.

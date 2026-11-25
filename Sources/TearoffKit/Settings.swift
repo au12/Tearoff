@@ -20,12 +20,14 @@ public struct TearoffSettings: Codable, Equatable {
     public var watchDownloads: Bool = false
     public var watchAutoPrint: Bool = false
     public var installedQueue: String?
+    /// The Setup Assistant has been finished or closed (it opens by itself only before that).
+    public var setupDone: Bool = false
 
     public init() {}
 
     enum CodingKeys: String, CodingKey {
         case printer, printerName, dpi, labelWidth, labelHeight, darkness, speed, topOffset, leftOffset
-        case gridFit, extraCodes, threshold, autoPrintOnOpen, watchDownloads, watchAutoPrint, installedQueue
+        case gridFit, extraCodes, threshold, autoPrintOnOpen, watchDownloads, watchAutoPrint, installedQueue, setupDone
     }
 
     // Tolerant decoding: settings written by older/newer builds never fail to load.
@@ -47,6 +49,7 @@ public struct TearoffSettings: Codable, Equatable {
         watchDownloads = (try? c.decodeIfPresent(Bool.self, forKey: .watchDownloads)) ?? false
         watchAutoPrint = (try? c.decodeIfPresent(Bool.self, forKey: .watchAutoPrint)) ?? false
         installedQueue = try? c.decodeIfPresent(String.self, forKey: .installedQueue)
+        setupDone = (try? c.decodeIfPresent(Bool.self, forKey: .setupDone)) ?? false
     }
 
     public var labelSize: LabelSize { LabelSize(width: labelWidth, height: labelHeight) }

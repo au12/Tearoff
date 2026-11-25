@@ -207,5 +207,30 @@
         "orientation": -90
       }
     ]
+  },
+  "16_sample_return.pdf": {
+    "labels": [
+      {
+        "barcodes": [
+          "1Z999AA10123456784",
+          "420627019205"
+        ],
+        "source": "image"
+      },
+      {
+        "barcodes": [
+          "TearoffDemo1"
+        ],
+        "kind": "barcode",
+        "orientation": -90
+      },
+      {
+        "barcodes": [
+          "https://github.com/au12/Tearoff"
+        ],
+        "kind": "qr",
+        "orientation": 0
+      }
+    ]
   }
 }
