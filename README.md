@@ -66,17 +66,31 @@ Building from source: `./install.sh` (Xcode or the Command Line Tools) builds th
 
 ## Set up (once)
 
+When the installer finishes, Tearoff opens its **Setup Assistant**. It takes about a minute:
+
+1. **Find your printer.** Tearoff searches your network and lists Zebras first. A single Zebra is picked for you, or you can
+   type its IP address. macOS asks once to allow local network access; click Allow.
+2. **Add it to your Mac.** One click adds e.g. "Zebra GX420d" to the Mac's printers, connected straight to the printer
+   (`socket://IP:9100`), so it's in the Print dialog of every app. Usually no password is needed.
+3. **Test print.** Print a test label, then answer *How did it come out?* Each answer has a fix: darkness for too light or too
+   dark, calibrating and label stock for cut-off or shifted labels, and troubleshooting when nothing printed. **Open Sample**
+   opens a sample return page in Preview, so you can try ⌘P for real. It prints the label, the return barcode and the QR code.
+4. **Start printing.** An animation shows the whole idea:
+
+<p align="center"><img src="docs/how-it-works.gif" width="668" alt="Animation: a return page in the browser, Command-P, the Print dialog, Tearoff finds the label, the barcode and the QR code, and only those print"></p>
+
+<p align="center">
+  <img src="docs/setup-find.png" width="420" alt="Setup Assistant: find your printer">
+  <img src="docs/setup-test.png" width="420" alt="Setup Assistant: test print">
+</p>
+
+Open it again any time from **Tearoff ▸ Setup Assistant…**, the menu bar icon, or the Printer pane. Everything it sets is also in
+the main window:
+
 <p align="center">
   <img src="docs/printer.png" width="420" alt="Printer pane: status, test label, calibrate, darkness and speed">
   <img src="docs/driver.png" width="420" alt="Print Driver pane: install the system printer">
 </p>
-
-1. **Printer**: Tearoff looks for Zebras on your network. Click **Use**, or type the IP address. It asks the printer for its
-   resolution (203/300/600 dpi). macOS asks once to allow local network access; click Allow.
-2. **Print Driver**: click **Install Driver & Add Printer** and enter your password. This adds e.g. "Zebra GX420d" to macOS,
-   connected straight to the printer (`socket://IP:9100`). Already have a Zebra queue? **Switch existing printers** keeps its
-   name and connection.
-3. Optional: **Print Test Label**. If the bars scan, you're set. If labels drift, run **Calibrate** once.
 
 ## Print
 
