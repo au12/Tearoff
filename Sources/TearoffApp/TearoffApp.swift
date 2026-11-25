@@ -84,6 +84,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             return
         }
         if let i = a.firstIndex(of: "--demo") {
+            // before any window exists, so nothing starts a real network scan
+            AppModel.shared.demo = true
+            AppModel.shared.persist = false
             var files: [URL] = []
             var pane = Pane.labels
             var setup: SetupStep? = nil

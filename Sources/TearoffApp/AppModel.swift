@@ -282,9 +282,10 @@ final class AppModel: ObservableObject {
                 "found": found.count, "zebras": found.filter { $0.isZebra }.count,
             ]))
             DispatchQueue.main.async {
-                self?.discovered = found
-                self?.queues = qs
-                self?.scanning = false
+                guard let self = self, !self.demo else { return }
+                self.discovered = found
+                self.queues = qs
+                self.scanning = false
             }
         }
     }

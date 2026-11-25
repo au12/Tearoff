@@ -81,26 +81,26 @@ struct PluckScene: View {
 
     /// Page layout in document units (300 × 240), fitted into whichever app's page area.
     static let itemRects: [CGRect] = [
-        CGRect(x: 18, y: 54, width: 150, height: 100),     // shipping label in a dashed cut line
-        CGRect(x: 30, y: 178, width: 112, height: 34),     // return-slip barcode with its value
-        CGRect(x: 216, y: 166, width: 40, height: 47),     // QR code with a caption
+        CGRect(x: 18, y: 54, width: 147, height: 98),      // shipping label in a dashed cut line
+        CGRect(x: 30, y: 186, width: 112, height: 32),     // return-slip barcode with its value
+        CGRect(x: 216, y: 184, width: 40, height: 47),     // QR code with a caption
     ]
     static let tags = ["Label", "Barcode", "QR code"]
     static let highlightAt: [Double] = [4.65, 4.95, 5.25]
     static let flightAt: [Double] = [6.3, 6.55, 6.8]
     static let printAt: [Double] = [7.6, 8.7, 9.8]
     static let textBars: [(CGRect, Double)] = [
-        (CGRect(x: 18, y: 13, width: 118, height: 9), 0.85),
-        (CGRect(x: 18, y: 30, width: 222, height: 4.5), 0.28),
-        (CGRect(x: 18, y: 39, width: 184, height: 4.5), 0.28),
-        (CGRect(x: 182, y: 60, width: 96, height: 4.5), 0.3),
-        (CGRect(x: 182, y: 70, width: 82, height: 4.5), 0.3),
-        (CGRect(x: 182, y: 80, width: 90, height: 4.5), 0.3),
-        (CGRect(x: 182, y: 90, width: 64, height: 4.5), 0.3),
+        (CGRect(x: 18, y: 12, width: 118, height: 9), 0.85),
+        (CGRect(x: 18, y: 28, width: 222, height: 4.5), 0.28),
+        (CGRect(x: 18, y: 37, width: 184, height: 4.5), 0.28),
+        (CGRect(x: 180, y: 58, width: 96, height: 4.5), 0.3),
+        (CGRect(x: 180, y: 68, width: 82, height: 4.5), 0.3),
+        (CGRect(x: 180, y: 78, width: 90, height: 4.5), 0.3),
+        (CGRect(x: 180, y: 88, width: 64, height: 4.5), 0.3),
         (CGRect(x: 18, y: 166, width: 92, height: 6), 0.75),
-        (CGRect(x: 212, y: 154, width: 50, height: 6), 0.75),
-        (CGRect(x: 18, y: 224, width: 204, height: 4), 0.28),
-        (CGRect(x: 18, y: 232, width: 160, height: 4), 0.28),
+        (CGRect(x: 212, y: 166, width: 50, height: 6), 0.75),
+        (CGRect(x: 18, y: 228, width: 180, height: 4), 0.28),
+        (CGRect(x: 18, y: 235, width: 140, height: 4), 0.28),
     ]
 
     // MARK: Geometry (scene units, 640 × 320)
@@ -258,7 +258,8 @@ struct PluckScene: View {
                 c.stroke(Path(roundedRect: box, cornerRadius: 6), with: .color(Color.accentColor), lineWidth: 2)
                 let tag = c.resolve(Text(Self.tags[i]).font(.system(size: 7.5, weight: .bold)).foregroundColor(.white))
                 let ts = tag.measure(in: CGSize(width: 200, height: 40))
-                let pill = CGRect(x: box.minX, y: box.minY - ts.height - 5, width: ts.width + 10, height: ts.height + 3)
+                // the tag sits on the highlight's top edge, clear of the headings above
+                let pill = CGRect(x: box.minX + 7, y: box.minY - (ts.height + 3) / 2, width: ts.width + 10, height: ts.height + 3)
                 c.fill(Path(roundedRect: pill, cornerRadius: pill.height / 2), with: .color(Color.accentColor))
                 c.draw(tag, at: CGPoint(x: pill.midX, y: pill.midY), anchor: .center)
             }
@@ -617,6 +618,17 @@ enum PluckFrames {
             if let png = rep.representation(using: .png, properties: [:]) {
                 try? png.write(to: dir.appendingPathComponent(String(format: "frame-%04d.png", i)))
             }
+        }
+        // one dark-mode frame, to check that palette
+        let dark = PluckScene(t: 5.9)
+            .padding(14)
+            .frame(width: 668, height: 376)
+            .background(Color(white: 0.13))
+            .environment(\.colorScheme, .dark)
+        let renderer = ImageRenderer(content: dark)
+        renderer.scale = 1
+        if let image = renderer.cgImage, let png = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]) {
+            try? png.write(to: dir.appendingPathComponent("dark-sample.png"))
         }
     }
 }

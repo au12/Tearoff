@@ -95,6 +95,7 @@ jobs:
           /Applications/Tearoff.app/Contents/MacOS/Tearoff --render-pluck "$PWD/out/pluck" || true
           ls out/pluck | wc -l
           python3 scripts/make_gif.py out/pluck out/screenshots/how-it-works.gif || true
+          cp out/pluck/dark-sample.png out/screenshots/how-it-works-dark.png || true
           open dist/Tearoff.pkg
           sleep 8
           id=$(swift scripts/window_id.swift Installer) && screencapture -x -o -l "$id" out/screenshots/installer.png
