@@ -34,7 +34,7 @@ snapped to the printer's dot grid. That includes labels sitting on a letter-size
 
 | | Tearoff | CrispDock |
 |---|---|---|
-| Price | Free, open source | Free tier watermarks every label; Pro $29.99/yr or $79 |
+| Price | Free, open source (MIT) | Free tier watermarks every label; Pro $29.99/yr or $79 |
 | Driver for ⌘P in any app | ✓ | ✓ |
 | Letter-sheet / sideways / two-up labels | ✓ | ✓ |
 | Native-resolution embedded images, vector labels without frames | ✓ documented | not described |
@@ -184,3 +184,7 @@ sideways labels, two-up sheets (framed and not), 4×6 pages (vector and 203 dpi 
 paper, multi-page PDFs and a label-shaped photo that must be ignored.
 
 Tearoff is not affiliated with Zebra Technologies.
+
+## License
+
+[MIT](LICENSE): free to use, change and share, including commercially.
