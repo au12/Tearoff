@@ -121,10 +121,15 @@ final class ZPLTests: XCTestCase {
         // no shift: leave the printer's own Label Top / Left Position alone
         XCTAssertFalse(ZPL.label(img).contains("^LT"))
         XCTAssertFalse(ZPL.label(img).contains("^LS"))
-        XCTAssertTrue(ZPL.label(img, settings: PrintSettings(topOffset: 60, leftOffset: 8)).contains("^LT60^LS-8"))
-        XCTAssertTrue(ZPL.label(img, settings: PrintSettings(topOffset: 500)).contains("^LT120"))
+        // the picture moves; the printer's own position (^LT/^LS) is never touched
+        let down = ZPL.label(img, settings: PrintSettings(topOffset: 60, leftOffset: 8))
+        XCTAssertTrue(down.contains("^LL1278") && down.contains("^FO8,60^GFA"))
+        XCTAssertFalse(down.contains("^LT") || down.contains("^LS"))
+        XCTAssertTrue(ZPL.label(img, settings: PrintSettings(topOffset: 500)).contains("^FO0,120^GFA"))
+        let up = ZPL.label(img, settings: PrintSettings(topOffset: -40))
+        XCTAssertTrue(up.contains("^LL1218") && up.contains("^FO0,0^GFA,\(102 * 1178),"))
         let t = ZPL.testLabel(widthDots: 812, heightDots: 1218, dpi: 203, settings: PrintSettings(topOffset: -40))
-        XCTAssertTrue(t.contains("^LT-40") && !t.contains("^LS"))
+        XCTAssertTrue(t.contains("^FO40,0^A0N") && !t.contains("^LT"))
     }
 }
 

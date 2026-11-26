@@ -14,15 +14,11 @@ public struct PrintSettings: Codable, Equatable {
         self.darkness = darkness; self.speed = speed; self.topOffset = topOffset; self.leftOffset = leftOffset
     }
 
-    /// ^LT / ^LS, only when Tearoff's own shift isn't zero. Sending them in every format would
-    /// overwrite the printer's saved Label Top / Left Position, which is where Zebra says a
-    /// printer's fixed offset belongs (it then applies to every Mac and app).
-    public var shiftCommands: String {
-        var s = ""
-        if topOffset != 0 { s += "^LT\(max(-120, min(120, topOffset)))" }
-        if leftOffset != 0 { s += "^LS\(-max(-200, min(200, leftOffset)))" }
-        return s
-    }
+    /// The shift is applied by moving the picture on the label (^FO), never with ^LT/^LS: those
+    /// change the printer's own saved position and how it backfeeds, and they stay in the printer
+    /// for every other Mac and app.
+    var shiftDown: Int { max(-120, min(120, topOffset)) }
+    var shiftRight: Int { max(-200, min(200, leftOffset)) }
 }
 
 /// ZPL II output. Each label is one ^GF graphic field using Zebra's compressed ASCII hex
@@ -103,14 +99,19 @@ public enum ZPL {
 
     /// One complete label format.
     public static func label(_ img: GrayImage, copies: Int = 1, settings: PrintSettings = PrintSettings()) -> String {
-        let gf = graphicField(img)
+        let (w, h) = (img.width, img.height)
+        let dx = settings.shiftRight, dy = settings.shiftDown
+        // up/left: drop the edge that would fall off; down/right: place the picture further in
+        let pic = dx < 0 || dy < 0
+            ? img.cropped(PixelRect(x0: min(w - 1, max(0, -dx)), y0: min(h - 1, max(0, -dy)), x1: w, y1: h))
+            : img
+        let gf = graphicField(pic)
         var s = ""
         if let d = settings.darkness { s += String(format: "~SD%02d", max(0, min(30, d))) }
         s += "^XA"
-        s += "^PW\(img.width)^LL\(img.height)^LH0,0^PON^FWN"
+        s += "^PW\(w)^LL\(h + max(0, dy))^LH0,0^PON^FWN"
         if let sp = settings.speed { let v = max(1, min(14, sp)); s += "^PR\(v),\(v),\(v)" }
-        s += settings.shiftCommands
-        s += "^FO0,0^GFA,\(gf.total),\(gf.total),\(gf.bytesPerRow),"
+        s += "^FO\(max(0, dx)),\(max(0, dy))^GFA,\(gf.total),\(gf.total),\(gf.bytesPerRow),"
         s += gf.data
         s += "^FS"
         s += "^PQ\(max(1, copies)),0,0,N"
@@ -128,13 +129,15 @@ public enum ZPL {
                                  settings: PrintSettings = PrintSettings()) -> String {
         let m = dpi / 10
         let w = widthDots - 2 * m
-        var s = "^XA^PW\(widthDots)^LL\(heightDots)^LH0,0^CI28" + settings.shiftCommands
-        s += "^FO\(m),\(m)^GB\(w),\(heightDots - 2 * m),3^FS"
-        s += "^FO\(2 * m),\(2 * m)^A0N,\(dpi / 4),\(dpi / 4)^FD\(title)^FS"
-        s += "^FO\(2 * m),\(2 * m + dpi / 3)^A0N,\(dpi / 8),\(dpi / 8)^FD\(dpi) dpi  \(widthDots)x\(heightDots) dots^FS"
-        s += "^FO\(2 * m),\(2 * m + dpi * 3 / 5)^BY\(max(2, dpi / 100)),3,\(dpi * 3 / 4)^BCN,\(dpi * 3 / 4),Y,N,N^FD1Z999AA10123456784^FS"
-        s += "^FO\(2 * m),\(2 * m + dpi * 2)^BQN,2,\(max(3, dpi / 40))^FDQA,https://github.com/au12/Tearoff^FS"
-        s += "^FO\(2 * m),\(heightDots - 3 * m)^A0N,\(dpi / 9),\(dpi / 9)^FDIf the bars above scan, you're set.^FS"
+        let dx = settings.shiftRight, dy = settings.shiftDown
+        func fo(_ x: Int, _ y: Int) -> String { "^FO\(max(0, x + dx)),\(max(0, y + dy))" }
+        var s = "^XA^PW\(widthDots)^LL\(heightDots + max(0, dy))^LH0,0^CI28"
+        s += "\(fo(m, m))^GB\(w),\(heightDots - 2 * m),3^FS"
+        s += "\(fo(2 * m, 2 * m))^A0N,\(dpi / 4),\(dpi / 4)^FD\(title)^FS"
+        s += "\(fo(2 * m, 2 * m + dpi / 3))^A0N,\(dpi / 8),\(dpi / 8)^FD\(dpi) dpi  \(widthDots)x\(heightDots) dots^FS"
+        s += "\(fo(2 * m, 2 * m + dpi * 3 / 5))^BY\(max(2, dpi / 100)),3,\(dpi * 3 / 4)^BCN,\(dpi * 3 / 4),Y,N,N^FD1Z999AA10123456784^FS"
+        s += "\(fo(2 * m, 2 * m + dpi * 2))^BQN,2,\(max(3, dpi / 40))^FDQA,https://github.com/au12/Tearoff^FS"
+        s += "\(fo(2 * m, heightDots - 3 * m))^A0N,\(dpi / 9),\(dpi / 9)^FDIf the bars above scan, you're set.^FS"
         s += "^XZ\n"
         return s
     }

@@ -109,10 +109,10 @@ N=$(( N + 1 ))
 lp -d TearoffTest -o TearoffShiftDown=40 -o TearoffShiftRight=n8 "tests/fixtures/06_page_4x6_vector.pdf" >/dev/null || STATUS=1
 for _ in $(seq 1 30); do [[ -s "$OUT/job-$N.zpl" ]] && break; sleep 1; done
 sleep 1
-if grep -q '\^LT40\^LS8' "$OUT/job-$N.zpl" 2>/dev/null; then
-  echo "PASS shift: ^LT40^LS8 in the job"
+if grep -q '\^FO0,40\^GFA' "$OUT/job-$N.zpl" 2>/dev/null && ! grep -q '\^LT\|\^LS' "$OUT/job-$N.zpl"; then
+  echo "PASS shift: the picture moved 40 dots down (^FO0,40), printer position untouched"
 else
-  echo "FAIL shift: no ^LT40^LS8 in job-$N.zpl"; STATUS=1
+  echo "FAIL shift: expected ^FO0,40 and no ^LT/^LS in job-$N.zpl"; STATUS=1
 fi
 
 echo "→ A USB printer prints through the Mac printer for its device"
