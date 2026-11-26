@@ -26,7 +26,11 @@ snapped to the printer's dot grid. That includes labels sitting on a letter-size
 - **Turns labels upright** by reading the Code 128 start/stop patterns. This works for raster labels with no text layer.
 - **Grid-fit barcodes.** Every Code 128 symbol is decoded and its checksum verified, then redrawn so each bar and space is a
   whole number of printer dots (e.g. 16-mil modules → exactly 3 dots at 203 dpi). A barcode whose checksum doesn't verify is
-  never redrawn.
+  never redrawn. QR codes on their own label are sampled module by module and redrawn with even, whole-dot modules.
+- **Clean text from low-resolution labels.** Browsers often save the label as a small on-screen copy (around 96 dpi). Tearoff
+  rebuilds its edges at print size instead of copying pixels into blocks, so small text stays legible and thin strokes stay
+  whole. The text printed with a slip's barcode is retyped crisply from the barcode's own value, but only after on-device OCR
+  confirms the printed line says exactly that. Nothing about the shipping label's own text is guessed or retyped.
 - **Drop a PDF on the app** to preview exactly what the printer will get, dot for dot, then press Return to print.
 - **Watch Downloads**: a new label PDF pops a notification with a Print button, or prints automatically.
 - **Printer tools**: USB and LAN discovery (port 9100 + the printer's web page; nothing that could print is ever sent to an
@@ -132,18 +136,22 @@ For each page, Tearoff:
 4. Scores label-shaped candidates (images, frames, blocks, the page itself) by aspect ratio, barcodes inside and how explicit their
    boundary is. A region that two complete labels tile is split.
 5. Orients each label from the Code 128 reading direction (or the PDF's text direction), renders it upright at 3× and area-averages
-   down to the printer's dots. Embedded images are read 1:1 from their own pixels. Then it thresholds at 50% coverage and grid-fits
-   verified Code 128 symbols.
+   down to the printer's dots. Embedded images are read 1:1 from their own pixels. One that has to be enlarged (a browser's
+   low-resolution copy) is rebuilt with Lanczos resampling, or rounded off with Scale2x first if it is pure black and white, and
+   cut slightly darker so hairline strokes survive. Then it thresholds at 50% coverage and grid-fits verified Code 128 symbols.
 6. Looks for codes *outside* those labels. 1D barcodes come from step 3. QR codes are located from their three finder patterns,
    then confirmed by the alternating timing patterns between them, so bullseyes, MaxiCode and logos don't count. Each code then
    grows across its width to take in narrow, centred lines of text close by (the human-readable digits, a return code). It stops
    at rules, paragraphs, tables and big gaps. The code and its text print on their own label, as large as they fit with a
-   quiet zone. Barcodes are grid-fitted upright before the label is turned, so the turn can't blur them. One document prints at
-   most eight extra codes, and a code that repeats prints once.
+   quiet zone. Barcodes are grid-fitted upright before the label is turned, so the turn can't blur them, and QR codes are redrawn
+   module for module once all three finder patterns sample exactly right. The barcode's own text line is retyped in Menlo Bold
+   when Apple's on-device Vision OCR reads it as the barcode's checksum-verified value (or, if OCR can't run, when it is the only
+   line on the label and has the right number of characters). One document prints at most eight extra codes, and a code that
+   repeats prints once.
 7. Encodes each label as a single `^GFA` field using Zebra's compressed ASCII. That's about 35 KB per 4×6 label instead of about 250 KB.
 
-All of this is pure Swift in `Sources/TearoffCore`, with no Vision or other ML. The same code runs in the app, the CLI and the
-sandboxed CUPS filter.
+All of this is pure Swift in `Sources/TearoffCore`. The one exception is the OCR check on a slip's text line, which uses Apple's
+on-device Vision framework and never leaves the Mac. The same code runs in the app, the CLI and the sandboxed CUPS filter.
 
 ## Performance log
 
