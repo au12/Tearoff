@@ -12,6 +12,7 @@ tearoff \(version) — crisp Zebra labels from PDFs
   tearoff extract FILE…      save labels as PNGs [--out DIR] [--json]
   tearoff zpl FILE           write ZPL to stdout [--out FILE] [--copies N]
   tearoff status             printer status [--printer HOST | --printer usb://…]
+  tearoff settings           the printer's own settings, with checks [--printer HOST]
   tearoff discover           find Zebra printers plugged in by USB or on this network [--usb: USB only]
   tearoff test-label         print a printer-rendered test label
   tearoff calibrate          calibrate the media sensor
@@ -158,6 +159,15 @@ case "print":
         }
     }
 
+case "settings":
+    let (h, p) = requireHost()
+    do {
+        let c = try ZebraPrinter.configuration(host: h, port: p)
+        for k in c.values.keys.sorted() { print("\(k.padding(toLength: 18, withPad: " ", startingAt: 0)) \(c.values[k] ?? "")") }
+        let found = c.check(labelHeightDots: settings.labelSize.dots(dpi: settings.dpi).1, dpi: settings.dpi)
+        if !found.isEmpty { print("") }
+        for f in found { print("\(f.level == .warning ? "⚠︎" : "ℹ︎") \(f.text)") }
+    } catch { fail(error.localizedDescription) }
 case "status":
     if case .usb(let uri)? = target {
         // USB can say whether it's plugged in, and which Mac printer feeds it

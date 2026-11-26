@@ -464,3 +464,51 @@ final class USBTests: XCTestCase {
         XCTAssertFalse(USBDevices.eplOnly("ZTC GX420d"))
     }
 }
+
+final class PrinterConfigTests: XCTestCase {
+    // a GX420d's ^HH reply (abridged)
+    let reply = "\u{02}" + """
+      15.0                DARKNESS          
+      -020                TEAR OFF          
+      TEAR OFF            PRINT MODE        
+      GAP/NOTCH           MEDIA TYPE        
+      WEB                 SENSOR TYPE       
+      812                 PRINT WIDTH       
+      1318                LABEL LENGTH      
+      39.0IN   989MM      MAXIMUM LENGTH    
+      <~>  7EH            CONTROL CHAR      
+      +000                LABEL TOP         
+      +0000               LEFT POSITION     
+      V56.17.17Z <-       FIRMWARE          
+    """ + "\u{03}"
+
+    func testReadsTheSettings() throws {
+        let c = try XCTUnwrap(PrinterConfig.parse(reply))
+        XCTAssertEqual(c.labelLengthDots, 1318)
+        XCTAssertEqual(c.mediaType, "GAP/NOTCH")
+        XCTAssertEqual(c.printMode, "TEAR OFF")
+        XCTAssertEqual(c["MAXIMUM LENGTH"], "39.0IN   989MM")
+        XCTAssertEqual(c["CONTROL CHAR"], "<~>  7EH")
+        XCTAssertEqual(c["FIRMWARE"], "V56.17.17Z <-")
+        XCTAssertEqual(c.labelTop, 0)
+        XCTAssertNil(PrinterConfig.parse("nothing useful"))
+    }
+
+    func testChecksAgainstTheLabelSize() throws {
+        let c = try XCTUnwrap(PrinterConfig.parse(reply))
+        // 6.49 in apart against 4 × 6: longer labels, worth a note but not a warning
+        let long = c.check(labelHeightDots: 1218, dpi: 203)
+        XCTAssertEqual(long.map(\.level), [.info])
+        XCTAssertTrue(long[0].text.contains("6.49 in"))
+        // a normal 4 × 6 roll (6.12 in apart): nothing to say
+        var normal = c
+        normal.values["LABEL LENGTH"] = "1243"
+        XCTAssertTrue(normal.check(labelHeightDots: 1218, dpi: 203).isEmpty)
+        // labels shorter than the chosen size, continuous paper, the printer's own offsets
+        XCTAssertEqual(normal.check(labelHeightDots: 1624, dpi: 203).map(\.level), [.warning])
+        var odd = c
+        odd.values["MEDIA TYPE"] = "CONTINUOUS"
+        odd.values["LABEL TOP"] = "+060"
+        XCTAssertEqual(odd.check(labelHeightDots: 1218, dpi: 203).map(\.level), [.warning, .info])
+    }
+}

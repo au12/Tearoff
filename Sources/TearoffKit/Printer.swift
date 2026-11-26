@@ -189,6 +189,17 @@ public enum ZebraPrinter {
         return i
     }
 
+    /// The printer's settings (^HH: its configuration label, sent back as text). Prints nothing.
+    public static func configuration(host: String, port: Int = 9100) throws -> PrinterConfig {
+        let c = try TCPClient(host: host, port: port, timeout: 3)
+        try c.send(Data("^XA^HH^XZ".utf8))
+        let data = c.receive(timeout: 5, idle: 0.8) { d in d.contains(3) }
+        guard let cfg = PrinterConfig.parse(String(decoding: data, as: UTF8.self)) else {
+            throw TearoffError.printer("The printer didn’t send its settings.")
+        }
+        return cfg
+    }
+
     /// Calibrates the media sensor (feeds a few labels).
     public static func calibrate(_ target: PrinterTarget) throws { try send("~JC", to: target, title: "Calibrate") }
 

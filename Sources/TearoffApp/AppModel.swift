@@ -54,6 +54,8 @@ final class AppModel: ObservableObject {
             if persist { settings.save() }
             if settings.printer != oldValue.printer {
                 identity = nil
+                printerConfig = nil
+                printerConfigAsked = false
                 refreshStatus()
             }
             if settings.watchDownloads != oldValue.watchDownloads { updateWatcher() }
@@ -64,6 +66,9 @@ final class AppModel: ObservableObject {
     @Published var toast: Toast?
     @Published var health: PrinterHealth = .unknown
     @Published var identity: ZebraIdentity?
+    /// The printer's own settings (network printers), for the Printer pane's checks.
+    @Published var printerConfig: PrinterConfig?
+    private var printerConfigAsked = false
     @Published var discovered: [DiscoveredPrinter] = []
     @Published var queues: [QueueInfo] = []
     /// Looking for printers on the network / plugged in by USB.
@@ -238,6 +243,8 @@ final class AppModel: ObservableObject {
                                 "feed": "Fed one label", "config": "Printing the configuration label"]
                     self?.show(done[what] ?? "Done")
                     if what == "test" { DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { self?.refreshStatus(quiet: true) } }
+                    // calibrating re-measures the labels: read the result once it's done feeding
+                    if what == "calibrate" { DispatchQueue.main.asyncAfter(deadline: .now() + 8) { self?.refreshPrinterConfig() } }
                 }
                 completion?(err)
             }
@@ -309,7 +316,19 @@ final class AppModel: ObservableObject {
                 guard let self = self else { return }
                 self.health = h
                 if let i = ident { self.identity = i }
+                if !failure.isEmpty { return }
+                if !self.printerConfigAsked { self.refreshPrinterConfig() }
             }
+        }
+    }
+
+    /// Reads the printer's settings (network printers only; prints nothing).
+    func refreshPrinterConfig() {
+        guard !demo, case .network(let host, let port)? = settings.printer else { return }
+        printerConfigAsked = true
+        net.async { [weak self] in
+            let c = try? ZebraPrinter.configuration(host: host, port: port)
+            DispatchQueue.main.async { if let c = c { self?.printerConfig = c } }
         }
     }
 
@@ -598,6 +617,8 @@ final class AppModel: ObservableObject {
         settings.printerName = "Zebra GX420d"
         health = .ready("Ready")
         identity = ZebraIdentity.parse("\u{02}GX420d-200dpi,V61.17.17Z,8,8192KB\u{03}")
+        printerConfig = PrinterConfig(values: ["MEDIA TYPE": "GAP/NOTCH", "PRINT MODE": "TEAR OFF", "LABEL LENGTH": "1243",
+                                               "LABEL TOP": "+000", "LEFT POSITION": "+0000"])
         discovered = [DiscoveredPrinter(target: .usb(uri: "usb://Zebra%20Technologies/ZTC%20ZD421-203dpi%20ZPL?serial=D2J213901234"),
                                         name: "ZD421-203dpi", detail: "Connected by USB · serial D2J213901234", isZebra: true, dpi: 203),
                       DiscoveredPrinter(target: .network(host: "10.0.10.50", port: 9100), name: "GX420d-200dpi",

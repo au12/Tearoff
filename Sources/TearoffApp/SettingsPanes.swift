@@ -85,6 +85,23 @@ struct PrinterPane: View {
                 if let id = model.identity {
                     LabeledContent("Model") { Text("\(id.model) · firmware \(id.firmware) · \(id.dpi) dpi") }
                 }
+                if let c = model.printerConfig {
+                    if let l = c.labelLengthDots {
+                        LabeledContent("Labels measured") {
+                            Text(String(format: "%.2f in from one to the next", Double(l) / Double(model.settings.dpi)))
+                        }
+                        .help("What the printer measured when it last calibrated (label plus the gap after it)")
+                    }
+                    LabeledContent("Media") {
+                        Text([c.mediaType, c.printMode].compactMap { $0?.capitalized }.joined(separator: " · "))
+                    }
+                    ForEach(c.check(labelHeightDots: model.settings.labelSize.dots(dpi: model.settings.dpi).1,
+                                    dpi: model.settings.dpi), id: \.text) { f in
+                        Label(f.text, systemImage: f.level == .warning ? "exclamationmark.triangle.fill" : "info.circle")
+                            .font(.callout)
+                            .foregroundStyle(f.level == .warning ? Color.orange : Color.secondary)
+                    }
+                }
                 HStack {
                     Button("Refresh") { model.refreshStatus() }
                     Button("Print Test Label") { model.printerCommand("test") }
