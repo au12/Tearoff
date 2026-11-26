@@ -232,5 +232,24 @@
         "orientation": 0
       }
     ]
+  },
+  "17_low_res_return.pdf": {
+    "labels": [
+      {
+        "barcodes": [
+          "1Z999AA10123456784",
+          "420627019205"
+        ],
+        "source": "image"
+      },
+      {
+        "barcodes": [
+          "H4TbxWkeRRMA"
+        ],
+        "kind": "barcode",
+        "orientation": -90,
+        "hri": true
+      }
+    ]
   }
 }

@@ -22,6 +22,17 @@ public struct RenderedLabel {
     public var barcodeTexts: [String]
     /// Quarter turns clockwise from the page to the printed label, when the renderer chose them.
     public var quarterTurns: Int? = nil
+    /// Grid-fitted Code 128 symbols: where they ended up on the label and what they say.
+    public var codeBoxes: [CodeBox] = []
+    /// How the barcode's printed text was confirmed before it was retyped ("ocr" or "layout"),
+    /// nil when it was left as it was.
+    public var hri: String? = nil
+}
+
+/// A redrawn barcode on the finished label.
+public struct CodeBox {
+    public var rect: PixelRect
+    public var text: String
 }
 
 /// How a found region maps onto the label stock.
@@ -47,10 +58,18 @@ public enum LabelRenderer {
         if c.kind == .frame && rect.width > 20 && rect.height > 20 { rect = rect.insetBy(1.5) }
         var rw: Int, rh: Int
         var exact = false
+        var enlarge = false
         if c.kind == .image, let n = c.native {
             rw = n.width; rh = n.height
             exact = true
-            if max(rw, rh) < Int(1.2 * Double(max(TW, TH))) { rw *= 3; rh *= 3 }
+            let (uw, uh) = q % 2 == 0 ? (Double(n.width), Double(n.height)) : (Double(n.height), Double(n.width))
+            if min(Double(TW) / uw, Double(TH) / uh) > 1.15 {
+                // a low-resolution image (a browser's on-screen copy of the label): read its own
+                // pixels, then rebuild smooth edges at print size below
+                enlarge = true
+            } else if max(rw, rh) < Int(1.2 * Double(max(TW, TH))) {
+                rw *= 3; rh *= 3
+            }
         } else {
             let (cw, ch) = q % 2 == 0 ? (TW, TH) : (TH, TW)
             let s = min(Double(cw) / rect.width, Double(ch) / rect.height)
@@ -65,8 +84,20 @@ public enum LabelRenderer {
             exact = false
         }
         let raw = trace.measureOrRun("render.region") { render(rect, rw, rh, exact) }
-        let g = trace.measureOrRun("render.rotate") { raw.rotated(quarterTurnsCW: q) }
+        var g = trace.measureOrRun("render.rotate") { raw.rotated(quarterTurnsCW: q) }
         trace?.count("render_pixels", rw * rh)
+        var opts = options
+        if enlarge {
+            // twice the dots it will cover, so barcodes can still be found and measured
+            let s = 2 * min(Double(TW) / Double(g.width), Double(TH) / Double(g.height))
+            let ew = max(1, Int((Double(g.width) * s).rounded())), eh = max(1, Int((Double(g.height) * s).rounded()))
+            let (big, blackAndWhite) = trace.measureOrRun("render.enlarge") { g.smoothlyEnlarged(width: ew, height: eh) }
+            g = big
+            trace?.count("enlarged", 1)
+            // anti-aliased strokes thinner than a pixel only reach mid-gray: a slightly darker
+            // cut keeps them whole instead of breaking them up
+            if !blackAndWhite { opts.threshold = min(210, options.threshold + 22) }
+        }
         var dest: PixelRect? = nil
         if mode != .fill {
             // upright size in points → dots
@@ -81,14 +112,14 @@ public enum LabelRenderer {
             let ow = max(1, min(TW, Int((pw * k).rounded()))), oh = max(1, min(TH, Int((ph * k).rounded())))
             dest = PixelRect(x0: (TW - ow) / 2, y0: (TH - oh) / 2, x1: (TW - ow) / 2 + ow, y1: (TH - oh) / 2 + oh)
         }
-        return finish(g, options: options, into: dest, trace: trace)
+        return finish(g, options: opts, into: dest, trace: trace)
     }
 
     /// Renders an extra code (a barcode or QR code plus its text) as large as the stock allows,
     /// keeping its quiet zone, and lays it on its side when that makes it bigger. Barcodes are
     /// grid-fitted in the upright frame first, so the turn (a lossless bit rotation) keeps them exact.
-    public static func renderCode(_ c: LabelCandidate, options: RenderOptions, trace: PerfTrace? = nil,
-                                  render: RegionRenderer) -> RenderedLabel {
+    public static func renderCode(_ c: LabelCandidate, options: RenderOptions, text: TextServices? = nil,
+                                  trace: PerfTrace? = nil, render: RegionRenderer) -> RenderedLabel {
         let (TW, TH) = options.size.dots(dpi: options.dpi)
         let q = ((c.quarterTurns % 4) + 4) % 4
         let rect = c.rect
@@ -112,7 +143,21 @@ public enum LabelRenderer {
         let maxPixels = 40_000_000.0
         if pw * ph * f * f > maxPixels { f = (maxPixels / (pw * ph)).squareRoot() }
         let rw = max(1, Int((rect.width * f).rounded())), rh = max(1, Int((rect.height * f).rounded()))
-        let raw = trace.measureOrRun("render.region") { render(rect, rw, rh, false) }
+        let isQR = c.symbology == "QR code"
+        let raw: GrayImage
+        if let n = c.native, n.width > 0, k * rect.width / Double(n.width) > 1.15 {
+            // drawn inside a low-resolution image: read its pixels one for one, then rebuild smooth
+            // edges (square ones for a QR code) instead of letting them blur into blocks
+            let native = trace.measureOrRun("render.region") { render(rect, n.width, n.height, true) }
+            let (big, blackAndWhite) = trace.measureOrRun("render.enlarge") {
+                native.smoothlyEnlarged(width: rw, height: rh, keepSquares: isQR)
+            }
+            raw = big
+            trace?.count("enlarged", 1)
+            if !blackAndWhite { canvas.threshold = min(210, options.threshold + 22) }
+        } else {
+            raw = trace.measureOrRun("render.region") { render(rect, rw, rh, false) }
+        }
         trace?.count("render_pixels", rw * rh)
         var padded = GrayImage(width: max(rw, Int((pw * f).rounded())), height: max(rh, Int((ph * f).rounded())))
         padded.paste(raw, x: (padded.width - rw) / 2, y: (padded.height - rh) / 2)
@@ -121,7 +166,23 @@ public enum LabelRenderer {
         let owI = max(1, min(CW, Int(ow.rounded()))), ohI = max(1, min(CH, Int(oh.rounded())))
         let dest = PixelRect(x0: (CW - owI) / 2, y0: (CH - ohI) / 2, x1: (CW - owI) / 2 + owI, y1: (CH - ohI) / 2 + ohI)
         // barcode size limits apply at the page's own scale, where the symbol had normal proportions
-        var out = finish(g, options: canvas, into: dest, ppi: f * 72, trace: trace)
+        var out = finish(g, options: canvas, into: dest, ppi: f * 72, qr: isQR, trace: trace)
+        // the barcode's printed text, retyped from its own verified value
+        if let services = text, out.codeBoxes.count == 1, let code = out.codeBoxes.first {
+            let sx = Double(g.width) / Double(max(1, dest.width)), sy = Double(g.height) / Double(max(1, dest.height))
+            let toSource: (PixelRect) -> PixelRect = { r in
+                PixelRect(x0: Int((Double(r.x0 - dest.x0) * sx).rounded(.down)), y0: Int((Double(r.y0 - dest.y0) * sy).rounded(.down)),
+                          x1: Int((Double(r.x1 - dest.x0) * sx).rounded(.up)), y1: Int((Double(r.y1 - dest.y0) * sy).rounded(.up)))
+            }
+            var img = out.image
+            let how = trace.measureOrRun("render.hri") {
+                HRIText.retypeset(&img, code: code.rect, value: code.text, source: g, toSource: toSource, services: services)
+            }
+            if let how = how {
+                out.image = img
+                out.hri = how.rawValue
+            }
+        }
         if sideways {
             let turned = trace.measureOrRun("render.rotate") { out.image.rotated(quarterTurnsCW: 3) }
             out.image = turned
@@ -134,7 +195,7 @@ public enum LabelRenderer {
     /// grid-fits barcodes. `ppi` (pixels per inch of `g` at the scale barcode limits apply to)
     /// defaults to the label's own scale.
     public static func finish(_ g: GrayImage, options: RenderOptions, into dest: PixelRect? = nil, ppi: Double? = nil,
-                              trace: PerfTrace? = nil) -> RenderedLabel {
+                              qr: Bool = false, trace: PerfTrace? = nil) -> RenderedLabel {
         let (TW, TH) = options.size.dots(dpi: options.dpi)
         let gw = g.width, gh = g.height
         guard gw > 0, gh > 0 else { return RenderedLabel(image: GrayImage(width: TW, height: TH), gridFitted: 0, barcodeTexts: []) }
@@ -160,12 +221,48 @@ public enum LabelRenderer {
         let codes = trace.measureOrRun("render.barcodes") { BarcodeFinder.find(in: g, ppi: hrPPI) }
         var texts = codes.compactMap { $0.text }
         var fitted = 0
+        var boxes: [CodeBox] = []
         if options.gridFit {
             let plans = trace.measureOrRun("render.gridfit_plan") { planGridFit(g, codes: codes, ppi: hrPPI) }
-            fitted = applyGridFit(&bits, plans: plans, scale: Double(ow) / Double(gw), offsetX: ox, offsetY: oy)
+            fitted = applyGridFit(&bits, plans: plans, scale: Double(ow) / Double(gw), offsetX: ox, offsetY: oy, boxes: &boxes)
             for p in plans where !texts.contains(p.text) { texts.append(p.text) }
+            if qr {
+                let symbols = trace.measureOrRun("render.qr") { QRFinder.find(in: g, ppi: hrPPI) }
+                for sym in symbols where drawQR(&bits, sym, sx: Double(ow) / Double(gw), sy: Double(oh) / Double(gh), ox: ox, oy: oy) {
+                    fitted += 1
+                }
+            }
         }
-        return RenderedLabel(image: bits, gridFitted: fitted, barcodeTexts: texts)
+        var r = RenderedLabel(image: bits, gridFitted: fitted, barcodeTexts: texts)
+        r.codeBoxes = boxes
+        return r
+    }
+
+    /// Redraws a sampled QR code with every module a whole number of dots, centred where it was,
+    /// in its own orientation (so it is the very same symbol, just with square, even modules).
+    static func drawQR(_ out: inout GrayImage, _ q: QRSymbol, sx: Double, sy: Double, ox: Int, oy: Int) -> Bool {
+        guard let m = q.modules else { return false }
+        let n = q.dimension
+        guard n >= 21, m.count == n * n else { return false }
+        let x0 = Double(ox) + Double(q.rect.x0) * sx, x1 = Double(ox) + Double(q.rect.x1) * sx
+        let y0 = Double(oy) + Double(q.rect.y0) * sy, y1 = Double(oy) + Double(q.rect.y1) * sy
+        let exact = min(x1 - x0, y1 - y0) / Double(n)
+        var d = Int(exact.rounded(.down))
+        if exact - Double(d) > 0.8 { d += 1 }          // the quiet zone has room for a slightly bigger symbol
+        guard d >= 2, abs(Double(d) - exact) <= 0.25 * exact else { return false }
+        let size = d * n
+        let left = Int(((x0 + x1) / 2 - Double(size) / 2).rounded()), top = Int(((y0 + y1) / 2 - Double(size) / 2).rounded())
+        guard left >= 0, top >= 0, left + size <= out.width, top + size <= out.height else { return false }
+        let pad = max(1, d / 2)
+        out.fill(PixelRect(x0: max(0, min(left, Int(x0.rounded(.down))) - pad), y0: max(0, min(top, Int(y0.rounded(.down))) - pad),
+                           x1: min(out.width, max(left + size, Int(x1.rounded(.up))) + pad),
+                           y1: min(out.height, max(top + size, Int(y1.rounded(.up))) + pad)), value: 255)
+        for r in 0..<n {
+            for c in 0..<n where m[r * n + c] {
+                out.fill(PixelRect(x0: left + c * d, y0: top + r * d, x1: left + (c + 1) * d, y1: top + (r + 1) * d), value: 0)
+            }
+        }
+        return true
     }
 
     // MARK: Grid-fit
@@ -239,7 +336,8 @@ public enum LabelRenderer {
 
     /// Redraws planned symbols on the output raster with every module an exact number of dots.
     @discardableResult
-    public static func applyGridFit(_ out: inout GrayImage, plans: [GridFitPlan], scale s: Double, offsetX ox: Int, offsetY oy: Int) -> Int {
+    public static func applyGridFit(_ out: inout GrayImage, plans: [GridFitPlan], scale s: Double, offsetX ox: Int, offsetY oy: Int,
+                                    boxes: inout [CodeBox]) -> Int {
         let TW = out.width, TH = out.height
         var n = 0
         for p in plans {
@@ -263,6 +361,7 @@ public enum LabelRenderer {
             for _ in 0..<3 where top > 0 && out.darkFraction(row: top - 1, from: xa, to: xb) > 0.2 { top -= 1 }
             for _ in 0..<3 where bot < TH && out.darkFraction(row: bot, from: xa, to: xb) > 0.2 { bot += 1 }
             out.fill(PixelRect(x0: x0c, y0: top, x1: x1c, y1: bot), value: 255)
+            boxes.append(CodeBox(rect: PixelRect(x0: x, y0: top, x1: x + D * M, y1: bot), text: p.text))
             for (k, mm) in p.modules.enumerated() {
                 let wd = mm * D
                 if k % 2 == 0 { out.fill(PixelRect(x0: x, y0: top, x1: x + wd, y1: bot), value: 0) }

@@ -36,7 +36,7 @@ sudo lpadmin -p TearoffTest -E -v socket://127.0.0.1:9100 -P "$ROOT/Tearoff.ppd"
 sudo cupsenable TearoffTest; sudo cupsaccept TearoffTest
 
 FIXTURES=(01_image_letter_dashed.pdf 03_vector_letter_unframed_rotated.pdf 04_two_up.pdf 08_browser_4x6_shrunk.pdf
-          14_qr_return_no_label.pdf)
+          14_qr_return_no_label.pdf 17_low_res_return.pdf)
 for f in "${FIXTURES[@]}"; do
   echo "→ lp $f"
   lp -d TearoffTest -t "$f" "tests/fixtures/$f"
@@ -88,6 +88,26 @@ for i, name in enumerate(fixtures, start=1):
 sys.exit(1 if fail else 0)
 PY
 STATUS=$?
+
+echo "→ Slip text retyped inside the sandboxed filter"
+python3 - <<'PY' || STATUS=1
+import glob, json, sys
+counts = {}
+for f in glob.glob("/Library/Logs/Tearoff/filter.jsonl") + glob.glob("/Users/Shared/Tearoff/filter.jsonl") + glob.glob("/private/tmp/tearoff-filter.jsonl"):
+    for line in open(f):
+        try:
+            c = json.loads(line).get("counters", {})
+        except ValueError:
+            continue
+        for k, v in c.items():
+            if k.startswith("hri_"):
+                counts[k] = counts.get(k, 0) + v
+print("  ", counts or "no counters")
+retyped = counts.get("hri_ocr", 0) + counts.get("hri_layout", 0)
+if retyped < 2:
+    print("FAIL: expected the two slips' text to be retyped"); sys.exit(1)
+print(f"PASS: {retyped} slip line(s) retyped ({counts.get('hri_ocr', 0)} confirmed by OCR)")
+PY
 
 echo "→ Status and identity against the fake printer"
 "$CLI" status --printer 127.0.0.1 || STATUS=1

@@ -40,6 +40,8 @@ def main():
                 problems.append(f"#{i + 1} from page {lab['page']}, expected {e['page']}")
             if "kind" in e and lab["kind"] != e["kind"]:
                 problems.append(f"#{i + 1} is a {lab['kind']}, expected {e['kind']}")
+            if e.get("hri") and not lab.get("hri"):
+                problems.append(f"#{i + 1}: the barcode's text wasn't retyped")
             want = e.get("orientation", 0)
             found = {b.text: b.orientation for b in zxingcpp.read_barcodes(im)}
             for code in e["barcodes"]:
@@ -54,7 +56,9 @@ def main():
         else:
             kinds = ",".join(l["kind"] for l in labels)
             fits = sum(l["gridFitted"] for l in labels)
-            print(f"PASS {name}: {len(labels)} label(s) [{kinds}] grid-fit {fits}, {ms} ms")
+            retyped = [l["hri"] for l in labels if l.get("hri")]
+            note = f", text retyped ({', '.join(retyped)})" if retyped else ""
+            print(f"PASS {name}: {len(labels)} label(s) [{kinds}] grid-fit {fits}{note}, {ms} ms")
     print(f"\n{len(expected) - failures}/{len(expected)} fixtures passed")
     sys.exit(1 if failures else 0)
 

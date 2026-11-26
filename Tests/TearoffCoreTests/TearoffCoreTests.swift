@@ -512,3 +512,150 @@ final class PrinterConfigTests: XCTestCase {
         XCTAssertEqual(odd.check(labelHeightDots: 1218, dpi: 203).map(\.level), [.warning, .info])
     }
 }
+
+final class PrintQualityTests: XCTestCase {
+    static var matrix21: [Bool] { ExtraCodeTests.qr21.flatMap { row in row.map { $0 == "#" } } }
+
+    static func drawQR21(_ img: inout GrayImage, x: Int, y: Int, module: Int) {
+        for (r, row) in ExtraCodeTests.qr21.enumerated() {
+            for (c, ch) in row.enumerated() where ch == "#" {
+                img.fill(PixelRect(x0: x + c * module, y0: y + r * module, x1: x + (c + 1) * module, y1: y + (r + 1) * module), value: 0)
+            }
+        }
+    }
+
+    /// An anti-aliased disc (area coverage), the way a browser draws curves into a small image.
+    static func disc(size n: Int, centre: Double, radius r: Double, supersample ss: Int = 8) -> GrayImage {
+        var img = GrayImage(width: n, height: n)
+        for y in 0..<n {
+            for x in 0..<n {
+                var inside = 0
+                for sy in 0..<ss {
+                    for sx in 0..<ss {
+                        let px = Double(x) + (Double(sx) + 0.5) / Double(ss) - centre
+                        let py = Double(y) + (Double(sy) + 0.5) / Double(ss) - centre
+                        if px * px + py * py <= r * r { inside += 1 }
+                    }
+                }
+                img[x, y] = UInt8(255 - 255 * inside / (ss * ss))
+            }
+        }
+        return img
+    }
+
+    static func mismatches(_ a: GrayImage, _ b: GrayImage) -> Int {
+        zip(a.pixels, b.pixels).filter { ($0 < 128) != ($1 < 128) }.count
+    }
+
+    func testLanczosKeepsFlatAreasAndEdgePositions() {
+        let flat = GrayImage(width: 20, height: 10, fill: 180).lanczosResampled(width: 47, height: 23)
+        XCTAssertEqual(flat.width, 47)
+        XCTAssertEqual(flat.height, 23)
+        XCTAssertTrue(flat.pixels.allSatisfy { abs(Int($0) - 180) <= 1 })
+        var step = GrayImage(width: 20, height: 4)
+        step.fill(PixelRect(x0: 0, y0: 0, x1: 10, y1: 4), value: 0)
+        let big = step.lanczosResampled(width: 60, height: 12).thresholded(128)
+        XCTAssertEqual((0..<60).filter { big[$0, 6] == 0 }.count, 30, "the edge stays exactly halfway")
+    }
+
+    func testScale2xRoundsAStaircaseAndKeepsLonePixels() {
+        var dot = GrayImage(width: 5, height: 5)
+        dot[2, 2] = 0
+        XCTAssertEqual(dot.scale2x().pixels.filter { $0 == 0 }.count, 4)
+        var diagonal = GrayImage(width: 8, height: 8)
+        for i in 0..<6 { diagonal[i + 1, i + 1] = 0 }
+        // six 2×2 blocks, joined by a filled corner on each side of every step
+        XCTAssertEqual(diagonal.scale2x().pixels.filter { $0 == 0 }.count, 6 * 4 + 5 * 2)
+    }
+
+    func testBlackAndWhiteDetection() {
+        var img = GrayImage(width: 100, height: 100)
+        img.fill(PixelRect(x0: 10, y0: 10, x1: 50, y1: 50), value: 0)
+        XCTAssertTrue(img.isBlackAndWhite)
+        for i in 0..<100 { img[i, 60] = 128 }
+        XCTAssertFalse(img.isBlackAndWhite)
+    }
+
+    func testSmoothEnlargingFollowsTheRealEdges() {
+        let low = Self.disc(size: 24, centre: 12, radius: 7.3)
+        let truth = Self.disc(size: 60, centre: 30, radius: 18.25, supersample: 1)
+        // what Tearoff did before: copy each pixel into a block, then average down
+        let blocky = GrayImage(width: 72, height: 72, pixels: (0..<(72 * 72)).map { low[($0 % 72) / 3, ($0 / 72) / 3] })
+            .resampled(width: 60, height: 60)
+        let smooth = low.smoothlyEnlarged(width: 60, height: 60)
+        XCTAssertFalse(smooth.blackAndWhite)
+        let before = Self.mismatches(blocky, truth), after = Self.mismatches(smooth.image, truth)
+        XCTAssertLessThanOrEqual(Double(after), 0.6 * Double(before), "anti-aliased: \(after) vs \(before) wrong dots")
+        // a black-and-white source has less to go on, but still comes out closer
+        let bw = low.thresholded(128)
+        let bwBlocky = GrayImage(width: 72, height: 72, pixels: (0..<(72 * 72)).map { bw[($0 % 72) / 3, ($0 / 72) / 3] })
+            .resampled(width: 60, height: 60)
+        let bwSmooth = bw.smoothlyEnlarged(width: 60, height: 60)
+        XCTAssertTrue(bwSmooth.blackAndWhite)
+        XCTAssertLessThan(Self.mismatches(bwSmooth.image, truth), Self.mismatches(bwBlocky, truth))
+    }
+
+    func testQRModulesAreSampledInTheRastersOwnOrientation() {
+        var big = GrayImage(width: 2000, height: 2000)
+        Self.drawQR21(&big, x: 500, y: 450, module: 23)
+        let small = big.resampled(width: 400, height: 400)       // 4.6 px modules, anti-aliased edges
+        var want = Self.matrix21
+        for k in 0..<4 {
+            guard let s = QRFinder.find(in: small.rotated(quarterTurnsCW: k), ppi: 300).first else { return XCTFail("rotation \(k)") }
+            XCTAssertEqual(s.modules, want, "rotation \(k)")
+            // the same matrix turned a quarter clockwise, for the next rotation
+            want = (0..<(21 * 21)).map { i in want[(20 - i % 21) * 21 + i / 21] }
+        }
+    }
+
+    func testQRCodesAreRedrawnWithWholeDotModules() {
+        var big = GrayImage(width: 1600, height: 1600)
+        Self.drawQR21(&big, x: 300, y: 300, module: 46)
+        let g = big.resampled(width: 800, height: 800)            // 23 px modules
+        let r = LabelRenderer.finish(g, options: RenderOptions(), qr: true)
+        XCTAssertEqual(r.gridFitted, 1)
+        guard let s = QRFinder.find(in: r.image, ppi: 203).first else { return XCTFail("no QR code on the label") }
+        XCTAssertEqual(s.modules, Self.matrix21)
+        XCTAssertEqual(s.module, s.module.rounded(), accuracy: 0.05, "every module a whole number of dots")
+    }
+
+    func testRetypesTheBarcodesTextWhenItChecksOut() {
+        var img = GrayImage(width: 812, height: 400)
+        let code = PixelRect(x0: 100, y0: 150, x1: 700, y1: 350)
+        img.fill(code, value: 0)
+        // twelve glyphs centred over the bars
+        var x = (812 - (12 * 20 + 11 * 8)) / 2
+        for _ in 0..<12 {
+            img.fill(PixelRect(x0: x, y0: 100, x1: x + 20, y1: 130), value: 0)
+            x += 28
+        }
+        let blocks = TextServices(read: nil) { text, ppem in
+            let h = max(4, Int(ppem)), cw = max(2, h / 2)
+            var g = GrayImage(width: cw * text.count + 4, height: h + 4)
+            g.fill(PixelRect(x0: 2, y0: 2, x1: 2 + cw * text.count, y1: 2 + h), value: 0)
+            return g
+        }
+        let value = "D7SnjMlpRRMA"
+        var out = img
+        XCTAssertEqual(HRIText.retypeset(&out, code: code, value: value, source: nil, toSource: { $0 }, services: blocks), .layout)
+        let ink = out.cropped(PixelRect(x0: 0, y0: 0, x1: 812, y1: 150)).inkBounds()
+        XCTAssertEqual(ink?.y1, 130, "still ends where the old line did, next to the bars")
+        XCTAssertGreaterThan(ink?.height ?? 0, 30, "and a little larger")
+
+        // OCR reads something else: it isn't the barcode's text, so it stays
+        let other = TextServices(read: { _ in ["RETURN SLIP"] }, draw: blocks.draw)
+        var kept = img
+        XCTAssertNil(HRIText.retypeset(&kept, code: code, value: value, source: img, toSource: { $0 }, services: other))
+        XCTAssertEqual(kept, img)
+        // OCR mixing up l and I still matches
+        let ocr = TextServices(read: { _ in ["D7SnjMIpRRMA"] }, draw: blocks.draw)
+        var read = img
+        XCTAssertEqual(HRIText.retypeset(&read, code: code, value: value, source: img, toSource: { $0 }, services: ocr), .ocr)
+        // two lines of text and no OCR: can't tell which is the barcode's, leave them
+        var two = img
+        two.fill(PixelRect(x0: 300, y0: 20, x1: 500, y1: 50), value: 0)
+        XCTAssertNil(HRIText.retypeset(&two, code: code, value: value, source: nil, toSource: { $0 }, services: blocks))
+        // the wrong number of characters and no OCR: leave it
+        XCTAssertNil(HRIText.retypeset(&out, code: code, value: "SHORT", source: nil, toSource: { $0 }, services: blocks))
+    }
+}

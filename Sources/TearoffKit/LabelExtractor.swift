@@ -32,6 +32,8 @@ public struct ExtractedLabel: Identifiable {
     public var gridFitted: Int
     public var barcodes: [String]
     public var dpi: Int
+    /// How the barcode's printed text was confirmed before being retyped ("ocr", "layout"), if it was.
+    public var hri: String? = nil
 
     public var carrier: String? { isExtraCode ? nil : Carrier.name(for: barcodes) }
     public var tracking: String? { isExtraCode ? nil : Carrier.trackingNumber(in: barcodes) }
@@ -100,11 +102,15 @@ public enum LabelExtractor {
                 for c in found.codes where extras.count < maxExtraCodes {
                     // the same code repeated (a second copy of the slip, page 2 of a receipt): print it once
                     if let t = c.texts.first, extras.contains(where: { $0.barcodes.contains(t) }) { continue }
-                    let r = LabelRenderer.renderCode(c, options: options.render, trace: trace, render: p.renderer)
-                    extras.append(ExtractedLabel(image: r.image, page: i + 1, kind: c.symbology == "QR code" ? "qr" : "barcode",
-                                                 detail: describe(c), rect: c.rect, quarterTurns: r.quarterTurns ?? c.quarterTurns,
-                                                 gridFitted: r.gridFitted, barcodes: unique(c.texts + r.barcodeTexts),
-                                                 dpi: options.render.dpi))
+                    let r = LabelRenderer.renderCode(c, options: options.render, text: SystemText.services,
+                                                     trace: trace, render: p.renderer)
+                    var l = ExtractedLabel(image: r.image, page: i + 1, kind: c.symbology == "QR code" ? "qr" : "barcode",
+                                           detail: describe(c), rect: c.rect, quarterTurns: r.quarterTurns ?? c.quarterTurns,
+                                           gridFitted: r.gridFitted, barcodes: unique(c.texts + r.barcodeTexts),
+                                           dpi: options.render.dpi)
+                    l.hri = r.hri
+                    trace?.count(r.hri.map { "hri_" + $0 } ?? "hri_kept", 1)
+                    extras.append(l)
                 }
             }
         }

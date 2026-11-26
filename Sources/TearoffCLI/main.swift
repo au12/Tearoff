@@ -118,7 +118,7 @@ case "extract":
             try? l.image.pngData(dpi: l.dpi)?.write(to: png)
             report.append([
                 "file": URL(fileURLWithPath: f).lastPathComponent, "index": n + 1, "page": l.page, "kind": l.kind,
-                "detail": l.detail, "quarterTurns": l.quarterTurns, "gridFitted": l.gridFitted,
+                "detail": l.detail, "quarterTurns": l.quarterTurns, "gridFitted": l.gridFitted, "hri": l.hri ?? "",
                 "barcodes": l.barcodes, "png": png.path, "width": l.image.width, "height": l.image.height,
                 "rect": [l.rect.x0, l.rect.y0, l.rect.x1, l.rect.y1],
                 "ms": Int(Date().timeIntervalSince(started) * 1000),

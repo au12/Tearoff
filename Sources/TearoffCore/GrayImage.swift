@@ -69,6 +69,41 @@ public struct GrayImage: Equatable {
         var weights: [Float] = []
         var offset: [Int] = []
 
+        init() {}
+
+        /// Lanczos-3 weights, widened when shrinking so the filter still averages. Taps past the
+        /// edges repeat the first/last pixel.
+        init(lanczosFrom inCount: Int, to outCount: Int, lobes a: Double = 3) {
+            let scale = Double(inCount) / Double(max(1, outCount))
+            let stretch = max(1, scale)
+            let support = a * stretch
+            start.reserveCapacity(outCount); count.reserveCapacity(outCount); offset.reserveCapacity(outCount)
+            for o in 0..<outCount {
+                let c = (Double(o) + 0.5) * scale - 0.5
+                let i0 = Int((c - support).rounded(.up)), i1 = max(i0, Int((c + support).rounded(.down)))
+                let lo = max(0, min(inCount - 1, i0)), hi = max(lo, min(inCount - 1, i1))
+                var ws = [Double](repeating: 0, count: hi - lo + 1)
+                var total = 0.0
+                for i in i0...i1 {
+                    let w = Self.lanczos((Double(i) - c) / stretch, a)
+                    ws[max(lo, min(hi, i)) - lo] += w
+                    total += w
+                }
+                if abs(total) < 1e-9 { ws = [Double](repeating: 0, count: ws.count); ws[0] = 1; total = 1 }
+                start.append(lo)
+                count.append(ws.count)
+                offset.append(weights.count)
+                for w in ws { weights.append(Float(w / total)) }
+            }
+        }
+
+        static func lanczos(_ x: Double, _ a: Double) -> Double {
+            if x == 0 { return 1 }
+            if abs(x) >= a { return 0 }
+            let px = Double.pi * x
+            return a * sin(px) * sin(px / a) / (px * px)
+        }
+
         init(inCount: Int, outCount: Int) {
             let scale = Double(inCount) / Double(max(1, outCount))
             start.reserveCapacity(outCount); count.reserveCapacity(outCount); offset.reserveCapacity(outCount)
@@ -97,8 +132,79 @@ public struct GrayImage: Equatable {
     public func resampled(width ow: Int, height oh: Int) -> GrayImage {
         guard ow > 0, oh > 0, width > 0, height > 0 else { return GrayImage(width: ow, height: oh) }
         if ow == width && oh == height { return self }
-        let wx = BoxWeights(inCount: width, outCount: ow)
-        let wy = BoxWeights(inCount: height, outCount: oh)
+        return separable(BoxWeights(inCount: width, outCount: ow), BoxWeights(inCount: height, outCount: oh), ow: ow, oh: oh)
+    }
+
+    /// Lanczos-3 resample: for enlarging, it rebuilds edges at their sub-pixel positions instead of
+    /// copying pixels into blocks.
+    public func lanczosResampled(width ow: Int, height oh: Int) -> GrayImage {
+        guard ow > 0, oh > 0, width > 0, height > 0 else { return GrayImage(width: ow, height: oh) }
+        if ow == width && oh == height { return self }
+        return separable(BoxWeights(lanczosFrom: width, to: ow), BoxWeights(lanczosFrom: height, to: oh), ow: ow, oh: oh)
+    }
+
+    /// True when (nearly) every pixel is pure black or white: a 1-bit source, with no
+    /// anti-aliasing to say where its edges really are.
+    public var isBlackAndWhite: Bool {
+        guard !pixels.isEmpty else { return true }
+        var gray = 0
+        for p in pixels where p > 24 && p < 232 { gray += 1 }
+        return gray * 1000 < pixels.count * 3
+    }
+
+    /// Scale2x (EPX): doubles a black-and-white image and rounds off the staircase on diagonals
+    /// and curves, without dropping or merging any pixel.
+    public func scale2x(threshold: UInt8 = 128) -> GrayImage {
+        let w = width, h = height
+        guard w > 0, h > 0 else { return self }
+        var b = [Bool](repeating: false, count: w * h)
+        for i in 0..<(w * h) { b[i] = pixels[i] < threshold }
+        var out = GrayImage(width: 2 * w, height: 2 * h)
+        let ow = 2 * w
+        b.withUnsafeBufferPointer { b in
+            out.pixels.withUnsafeMutableBufferPointer { o in
+                for y in 0..<h {
+                    let up = max(0, y - 1) * w, row = y * w, down = min(h - 1, y + 1) * w
+                    for x in 0..<w {
+                        let e = b[row + x]
+                        let a = b[up + x], d = b[down + x]
+                        let l = b[row + max(0, x - 1)], r = b[row + min(w - 1, x + 1)]
+                        var e0 = e, e1 = e, e2 = e, e3 = e
+                        if l == a && l != d && a != r { e0 = a }
+                        if a == r && a != l && r != d { e1 = r }
+                        if d == l && d != r && l != a { e2 = l }
+                        if r == d && r != a && d != l { e3 = d }
+                        let k = 2 * y * ow + 2 * x
+                        o[k] = e0 ? 0 : 255
+                        o[k + 1] = e1 ? 0 : 255
+                        o[k + ow] = e2 ? 0 : 255
+                        o[k + ow + 1] = e3 ? 0 : 255
+                    }
+                }
+            }
+        }
+        return out
+    }
+
+    /// Enlarges a low-resolution raster for printing by rebuilding smooth edges instead of copying
+    /// pixels into blocks. Anti-aliased (gray) sources go through Lanczos, which keeps their
+    /// sub-pixel edge positions; black-and-white sources are first rounded off with Scale2x
+    /// (unless `keepSquares`, for symbols such as QR codes whose corners must stay square).
+    public func smoothlyEnlarged(width ow: Int, height oh: Int, keepSquares: Bool = false) -> (image: GrayImage, blackAndWhite: Bool) {
+        let bw = isBlackAndWhite
+        var src = self
+        if bw && !keepSquares {
+            var n = 0
+            while n < 2 && Double(src.width * 2) <= Double(ow) * 1.5 && Double(src.height * 2) <= Double(oh) * 1.5 {
+                src = src.scale2x()
+                n += 1
+            }
+        }
+        let out = src.width < ow || src.height < oh ? src.lanczosResampled(width: ow, height: oh) : src.resampled(width: ow, height: oh)
+        return (out, bw)
+    }
+
+    func separable(_ wx: BoxWeights, _ wy: BoxWeights, ow: Int, oh: Int) -> GrayImage {
         var tmp = [Float](repeating: 0, count: height * ow)
         let w = width, h = height
         pixels.withUnsafeBufferPointer { src in

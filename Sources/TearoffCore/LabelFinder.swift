@@ -314,10 +314,27 @@ public enum LabelFinder {
         if extras {
             codes = t.measure("find.extras") {
                 CodeFinder.find(big: big, scale: hb, labels: chosen.map { $0.rect }, trace: t)
-            }
+            }.map { nativePixels($0, images: page.images) }
             t.count("extra_codes", codes.count)
         }
         return PageFindings(labels: chosen, codes: codes)
+    }
+
+    /// A code drawn inside an embedded image: snap its box to the image's pixel grid and note how
+    /// many of the image's own pixels it spans, so it can be read one for one and enlarged smoothly.
+    static func nativePixels(_ c: LabelCandidate, images: [ImagePlacement]) -> LabelCandidate {
+        let r = c.rect
+        guard r.area > 0, let im = images.first(where: {
+            $0.pixelWidth > 0 && $0.pixelHeight > 0 && $0.rect.width > 0 && $0.rect.height > 0 && $0.rect.intersectionArea(r) >= 0.9 * r.area
+        }) else { return c }
+        let dx = Double(im.pixelWidth) / im.rect.width, dy = Double(im.pixelHeight) / im.rect.height
+        let px0 = max(0, ((r.x0 - im.rect.x0) * dx).rounded(.down)), px1 = min(Double(im.pixelWidth), ((r.x1 - im.rect.x0) * dx).rounded(.up))
+        let py0 = max(0, ((r.y0 - im.rect.y0) * dy).rounded(.down)), py1 = min(Double(im.pixelHeight), ((r.y1 - im.rect.y0) * dy).rounded(.up))
+        guard px1 - px0 >= 8, py1 - py0 >= 8 else { return c }
+        var out = c
+        out.rect = PageRect(x0: im.rect.x0 + px0 / dx, y0: im.rect.y0 + py0 / dy, x1: im.rect.x0 + px1 / dx, y1: im.rect.y0 + py1 / dy)
+        out.native = (Int(px1 - px0), Int(py1 - py0))
+        return out
     }
 
     static func orientation(_ c: LabelCandidate, texts: [TextRun]) -> Int {

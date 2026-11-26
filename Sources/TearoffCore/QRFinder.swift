@@ -9,6 +9,10 @@ public struct QRSymbol: CustomStringConvertible {
     public var dimension: Int
     /// Module size in pixels.
     public var module: Double
+    /// Every module, sampled at its centre in the raster's own orientation (row-major, true =
+    /// dark). Only set when the sampling checks out: the three finder patterns land exactly in three
+    /// of the four corners. Lets the symbol be redrawn module for module on the printer's dots.
+    public var modules: [Bool]? = nil
 
     public var description: String {
         "qr(\(rect.x0),\(rect.y0)-\(rect.x1),\(rect.y1) \(dimension)x\(dimension) " + String(format: "m=%.1f)", module)
@@ -142,7 +146,9 @@ public enum QRFinder {
                     }
                     let r = PixelRect(x0: Int(xs.min()!.rounded(.down)), y0: Int(ys.min()!.rounded(.down)),
                                       x1: Int(xs.max()!.rounded(.up)), y1: Int(ys.max()!.rounded(.up)))
-                    options.append((Double(ok) / Double(tot), [a, b, c], QRSymbol(rect: r, dimension: dim, module: mod)))
+                    var symbol = QRSymbol(rect: r, dimension: dim, module: mod)
+                    symbol.modules = sample(bw, w, h, x0: xs.min()!, y0: ys.min()!, x1: xs.max()!, y1: ys.max()!, n: dim)
+                    options.append((Double(ok) / Double(tot), [a, b, c], symbol))
                 }
             }
         }
@@ -154,6 +160,34 @@ public enum QRFinder {
             out.append(o.symbol)
         }
         return out
+    }
+
+    /// Samples an axis-aligned symbol's modules at their centres. Nil unless the three finder
+    /// patterns come out exactly right in three corners (and not the fourth).
+    static func sample(_ bw: [UInt8], _ w: Int, _ h: Int, x0: Double, y0: Double, x1: Double, y1: Double, n: Int) -> [Bool]? {
+        let mx = (x1 - x0) / Double(n), my = (y1 - y0) / Double(n)
+        guard n >= 21, mx >= 2, my >= 2, abs(mx - my) <= 0.1 * mx else { return nil }
+        var m = [Bool](repeating: false, count: n * n)
+        for r in 0..<n {
+            let yi = Int((y0 + (Double(r) + 0.5) * my).rounded(.down))
+            guard yi >= 0, yi < h else { return nil }
+            for c in 0..<n {
+                let xi = Int((x0 + (Double(c) + 0.5) * mx).rounded(.down))
+                guard xi >= 0, xi < w else { return nil }
+                m[r * n + c] = bw[yi * w + xi] == 1
+            }
+        }
+        var corners = 0
+        for (r0, c0) in [(0, 0), (0, n - 7), (n - 7, 0), (n - 7, n - 7)] where finderAt(m, n, r0, c0) { corners += 1 }
+        return corners == 3 ? m : nil
+    }
+
+    /// A finder pattern (dark ring, light ring, dark 3×3 centre) with its top-left module at (r0, c0).
+    static func finderAt(_ m: [Bool], _ n: Int, _ r0: Int, _ c0: Int) -> Bool {
+        for r in 0..<7 {
+            for c in 0..<7 where m[(r0 + r) * n + c0 + c] != (max(abs(r - 3), abs(c - 3)) != 2) { return false }
+        }
+        return true
     }
 
     /// Run lengths within half a module of 1:1:3:1:1.

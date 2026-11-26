@@ -34,6 +34,7 @@ SAMPLE_SLIP = "TearoffDemo1"
 SAMPLE_QR = "https://github.com/au12/Tearoff"
 # extra codes print on their own label, best fit; wide ones lie on their side (read bottom to top)
 SLIP_EXTRA = {"barcodes": [SLIP], "kind": "barcode", "orientation": -90}
+SLIP_LOWRES = "H4TbxWkeRRMA"
 RECEIPT_EXTRA = {"barcodes": ["RECEIPT0001"], "kind": "barcode", "orientation": -90}
 
 
@@ -167,6 +168,13 @@ def code128_image(value, module=3, hri_above=False):
     doc = pymupdf.open(stream=buf.getvalue(), filetype="pdf")
     pix = doc[0].get_pixmap(dpi=72 * module, colorspace="gray", clip=pymupdf.Rect(0, 100 - top, bc.width, 100))
     return Image.frombytes("L", (pix.width, pix.height), pix.samples).convert("RGB")
+
+
+def code128_bw_image(value, module=2):
+    """A 1-bit slip barcode with its value above the bars (no anti-aliasing), like the small PNG a
+    returns page embeds."""
+    im = code128_image(value, module=module, hri_above=True).convert("L")
+    return im.point(lambda v: 0 if v < 128 else 255).convert("RGB")
 
 
 def draw_qr(c, value, x, y, size):
@@ -426,6 +434,24 @@ def fx_sample_return(path):
                        {"barcodes": [SAMPLE_QR], "kind": "qr", "orientation": 0}]}
 
 
+def fx_low_res_return(path):
+    """Chrome's "Save as PDF" of a returns page: the label is the page's small on-screen copy
+    (anti-aliased, 128 dpi) and the slip a 1-bit image with its text above the bars."""
+    c = canvas.Canvas(path, pagesize=LETTER)
+    W, H = LETTER
+    doc = pymupdf.open(stream=label_pdf_bytes(), filetype="pdf")
+    pix = doc[0].get_pixmap(dpi=128, colorspace="gray", alpha=False)
+    im = Image.frombytes("L", (pix.width, pix.height), pix.samples).convert("RGB")      # 512 x 768
+    c.setFont("Helvetica-Bold", 11); c.drawString(36, H - 60, "Your return label")
+    c.drawImage(img_reader(im), 197, H - 432.8, 172.8, 259.2)                             # shown at 2.4 x 3.6 in
+    c.setFont("Helvetica-Bold", 11); c.drawString(36, H - 470, "Return Authorization Slip")
+    slip = code128_bw_image(SLIP_LOWRES)
+    c.drawImage(img_reader(slip), 178.5, H - 600, slip.width * 0.45, slip.height * 0.45)
+    c.showPage(); c.save()
+    return {"labels": [{"barcodes": [UPS_TRACK, POSTAL], "source": "image"},
+                       {"barcodes": [SLIP_LOWRES], "kind": "barcode", "orientation": -90, "hri": True}]}
+
+
 def main():
     os.makedirs(OUT, exist_ok=True)
     expected = {}
@@ -444,6 +470,7 @@ def main():
         ("14_qr_return_no_label.pdf", fx_qr_return_no_label),
         ("15_label_with_side_codes.pdf", fx_label_with_side_codes),
         ("16_sample_return.pdf", fx_sample_return),
+        ("17_low_res_return.pdf", fx_low_res_return),
     ]
     for name, fn in fx:
         expected[name] = fn(os.path.join(OUT, name))

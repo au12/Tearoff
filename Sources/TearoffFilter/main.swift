@@ -103,7 +103,8 @@ func run() -> Int32 {
         trace.measure("zpl.write") { FileHandle.standardOutput.write(zpl) }
         emit("PAGE: \(i + 1) \(copies)")
         let codes = l.barcodes.isEmpty ? "" : " [\(l.barcodes.joined(separator: ", "))]"
-        emit("DEBUG: Tearoff label \(i + 1): page \(l.page), \(l.detail), turned \(l.quarterTurns * 90) deg, \(l.gridFitted) barcode(s) grid-fitted\(codes)")
+        let retyped = l.hri.map { ", text retyped (\($0))" } ?? ""
+        emit("DEBUG: Tearoff label \(i + 1): page \(l.page), \(l.detail), turned \(l.quarterTurns * 90) deg, \(l.gridFitted) barcode(s) grid-fitted\(codes)\(retyped)")
     }
     let ms = Int(trace.elapsedMs.rounded())
     emit("INFO: Tearoff: \(labels.count) label\(labels.count == 1 ? "" : "s") at \(dpi) dpi (\(ms) ms)")
