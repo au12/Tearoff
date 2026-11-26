@@ -103,6 +103,18 @@ else
   echo "FAIL raw queue: job-$N.zpl missing or filtered"; ls "$OUT"; STATUS=1
 fi
 
+echo "→ The queue's Shift Label Down option reaches the printer"
+grep -q '\^LT0\^LS0' "$OUT/job-1.zpl" || { echo "FAIL shift: job 1 didn't reset the shift"; STATUS=1; }
+N=$(( N + 1 ))
+lp -d TearoffTest -o TearoffShiftDown=40 -o TearoffShiftRight=n8 "tests/fixtures/06_page_4x6_vector.pdf" >/dev/null || STATUS=1
+for _ in $(seq 1 30); do [[ -s "$OUT/job-$N.zpl" ]] && break; sleep 1; done
+sleep 1
+if grep -q '\^LT40\^LS8' "$OUT/job-$N.zpl" 2>/dev/null; then
+  echo "PASS shift: ^LT40^LS8 in the job"
+else
+  echo "FAIL shift: no ^LT40^LS8 in job-$N.zpl"; STATUS=1
+fi
+
 echo "→ A USB printer prints through the Mac printer for its device"
 USB_URI='usb://Zebra%20Technologies/ZTC%20GX420d?serial=TEAROFFCI01'
 # created stopped (no -E) but accepting: nothing is plugged in, so the job waits in the queue

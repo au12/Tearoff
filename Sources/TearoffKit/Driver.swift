@@ -111,6 +111,28 @@ public enum Driver {
         *TearoffMode Page/Print whole pages: ""
         *CloseUI: *TearoffMode
 
+        *OpenUI *TearoffShiftDown/Shift Label Down: PickOne
+        *OrderDependency: 20 AnySetup *TearoffShiftDown
+        *DefaultTearoffShiftDown: 0
+
+        """
+        for d in stride(from: -120, through: 120, by: 4) {
+            p += "*TearoffShiftDown \(shiftChoice(d))/\(d == 0 ? "None" : d > 0 ? "Down \(d) dots" : "Up \(-d) dots"): \"\"\n"
+        }
+        p += "*CloseUI: *TearoffShiftDown\n"
+        p += """
+
+        *OpenUI *TearoffShiftRight/Shift Label Right: PickOne
+        *OrderDependency: 20 AnySetup *TearoffShiftRight
+        *DefaultTearoffShiftRight: 0
+
+        """
+        for d in stride(from: -200, through: 200, by: 4) {
+            p += "*TearoffShiftRight \(shiftChoice(d))/\(d == 0 ? "None" : d > 0 ? "Right \(d) dots" : "Left \(-d) dots"): \"\"\n"
+        }
+        p += "*CloseUI: *TearoffShiftRight\n"
+        p += """
+
         *OpenUI *Darkness/Darkness: PickOne
         *OrderDependency: 20 AnySetup *Darkness
         *DefaultDarkness: Printer
@@ -166,6 +188,8 @@ public enum Driver {
         public var label: LabelSize
         public var darkness: Int?
         public var speed: Int?
+        public var topOffset = 0
+        public var leftOffset = 0
         /// Print barcodes/QR codes found outside the label too (the queue's default).
         public var extraCodes: Bool
         /// Existing queues to switch over to this driver (names and URIs are kept).
@@ -188,11 +212,22 @@ public enum Driver {
 
     static func q(_ s: String) -> String { "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'" }
 
-    static func optionArgs(dpi: Int, label: LabelSize, darkness: Int?, speed: Int?, extras: Bool = true) -> String {
+    /// PPD choice for a shift in dots: "0", "8", "n8" (PPD keywords can't safely start with "-").
+    public static func shiftChoice(_ dots: Int) -> String { dots < 0 ? "n\(-dots)" : "\(dots)" }
+    public static func shift(fromChoice c: String?) -> Int {
+        guard let c = c else { return 0 }
+        if c.hasPrefix("n") { return -(Int(c.dropFirst()) ?? 0) }
+        return Int(c) ?? 0
+    }
+
+    static func optionArgs(dpi: Int, label: LabelSize, darkness: Int?, speed: Int?, extras: Bool = true,
+                           topOffset: Int = 0, leftOffset: Int = 0) -> String {
         let stock = stockName(for: label)
         return [
             "-o Resolution=\(dpi)dpi", "-o TearoffLabel=\(stock)", "-o PageSize=\(stock)",
             "-o TearoffExtras=\(extras ? "True" : "False")",
+            "-o TearoffShiftDown=\(shiftChoice(max(-120, min(120, topOffset / 4 * 4))))",
+            "-o TearoffShiftRight=\(shiftChoice(max(-200, min(200, leftOffset / 4 * 4))))",
             "-o Darkness=\(darkness.map { String(min(30, max(0, $0 / 2 * 2))) } ?? "Printer")",
             "-o PrintSpeed=\(speed.map { String(min(6, max(2, $0))) } ?? "Printer")",
         ].joined(separator: " ")
@@ -200,7 +235,8 @@ public enum Driver {
 
     /// The root shell script the installer runs.
     public static func installScript(_ r: InstallRequest, filterSource: String, ppdSource: String) -> String {
-        let opts = optionArgs(dpi: r.dpi, label: r.label, darkness: r.darkness, speed: r.speed, extras: r.extraCodes)
+        let opts = optionArgs(dpi: r.dpi, label: r.label, darkness: r.darkness, speed: r.speed, extras: r.extraCodes,
+                              topOffset: r.topOffset, leftOffset: r.leftOffset)
         var s = """
         #!/bin/bash
         set -e
@@ -228,7 +264,8 @@ public enum Driver {
     /// plain `lpadmin`, which admin users may do without a password. Returns false if macOS refused.
     public static func addQueuesWithoutPrompt(_ r: InstallRequest) -> Bool {
         guard isInstalled, FileManager.default.fileExists(atPath: ppdPath) else { return false }
-        let opts = optionArgs(dpi: r.dpi, label: r.label, darkness: r.darkness, speed: r.speed, extras: r.extraCodes)
+        let opts = optionArgs(dpi: r.dpi, label: r.label, darkness: r.darkness, speed: r.speed, extras: r.extraCodes,
+                              topOffset: r.topOffset, leftOffset: r.leftOffset)
             .split(separator: " ").map(String.init)
         if !r.deviceURI.isEmpty {
             let res = Shell.run("/usr/sbin/lpadmin", ["-p", r.queueName, "-E", "-v", r.deviceURI, "-P", ppdPath,
@@ -274,8 +311,10 @@ public enum Driver {
     }
 
     /// Updates a queue's defaults (works without a password for admin users; falls back to a prompt).
-    public static func setDefaults(queue: String, dpi: Int, label: LabelSize, darkness: Int?, speed: Int?, extras: Bool = true) {
-        let args = ["-p", queue] + optionArgs(dpi: dpi, label: label, darkness: darkness, speed: speed, extras: extras)
+    public static func setDefaults(queue: String, dpi: Int, label: LabelSize, darkness: Int?, speed: Int?, extras: Bool = true,
+                                   topOffset: Int = 0, leftOffset: Int = 0) {
+        let args = ["-p", queue] + optionArgs(dpi: dpi, label: label, darkness: darkness, speed: speed, extras: extras,
+                                               topOffset: topOffset, leftOffset: leftOffset)
             .split(separator: " ").map(String.init)
         let r = Shell.run("/usr/sbin/lpadmin", args)
         if r.status != 0 {

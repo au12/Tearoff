@@ -193,7 +193,7 @@ case "discover":
 case "test-label":
     guard let t = target else { fail("no printer set") }
     let (w, h) = settings.labelSize.dots(dpi: settings.dpi)
-    do { try ZebraPrinter.send(ZPL.testLabel(widthDots: w, heightDots: h, dpi: settings.dpi), to: t) } catch { fail(error.localizedDescription) }
+    do { try ZebraPrinter.send(ZPL.testLabel(widthDots: w, heightDots: h, dpi: settings.dpi, settings: settings.printSettings), to: t) } catch { fail(error.localizedDescription) }
     print("Test label sent to \(t)")
 
 case "calibrate":

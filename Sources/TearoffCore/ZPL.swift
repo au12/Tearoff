@@ -13,6 +13,12 @@ public struct PrintSettings: Codable, Equatable {
     public init(darkness: Int? = nil, speed: Int? = nil, topOffset: Int = 0, leftOffset: Int = 0) {
         self.darkness = darkness; self.speed = speed; self.topOffset = topOffset; self.leftOffset = leftOffset
     }
+
+    /// ^LT and ^LS, always sent (zero too): the printer keeps the last values it was given until it's
+    /// switched off, so a shift one Mac sent would otherwise carry over to the next Mac's labels.
+    public var shiftCommands: String {
+        "^LT\(max(-120, min(120, topOffset)))^LS\(-max(-200, min(200, leftOffset)))"
+    }
 }
 
 /// ZPL II output. Each label is one ^GF graphic field using Zebra's compressed ASCII hex
@@ -99,8 +105,7 @@ public enum ZPL {
         s += "^XA"
         s += "^PW\(img.width)^LL\(img.height)^LH0,0^PON^FWN"
         if let sp = settings.speed { let v = max(1, min(14, sp)); s += "^PR\(v),\(v),\(v)" }
-        if settings.topOffset != 0 { s += "^LT\(max(-120, min(120, settings.topOffset)))" }
-        if settings.leftOffset != 0 { s += "^LS\(-settings.leftOffset)" }
+        s += settings.shiftCommands
         s += "^FO0,0^GFA,\(gf.total),\(gf.total),\(gf.bytesPerRow),"
         s += gf.data
         s += "^FS"
@@ -113,11 +118,13 @@ public enum ZPL {
         labels.map { label($0, copies: copies, settings: settings) }.joined()
     }
 
-    /// A printer-generated test label (fonts and barcodes rendered by the printer itself).
-    public static func testLabel(widthDots: Int, heightDots: Int, dpi: Int, title: String = "Tearoff test label") -> String {
+    /// A printer-generated test label (fonts and barcodes rendered by the printer itself), shifted
+    /// like real labels so the shift settings can be dialled in with it.
+    public static func testLabel(widthDots: Int, heightDots: Int, dpi: Int, title: String = "Tearoff test label",
+                                 settings: PrintSettings = PrintSettings()) -> String {
         let m = dpi / 10
         let w = widthDots - 2 * m
-        var s = "^XA^PW\(widthDots)^LL\(heightDots)^LH0,0^CI28"
+        var s = "^XA^PW\(widthDots)^LL\(heightDots)^LH0,0^CI28" + settings.shiftCommands
         s += "^FO\(m),\(m)^GB\(w),\(heightDots - 2 * m),3^FS"
         s += "^FO\(2 * m),\(2 * m)^A0N,\(dpi / 4),\(dpi / 4)^FD\(title)^FS"
         s += "^FO\(2 * m),\(2 * m + dpi / 3)^A0N,\(dpi / 8),\(dpi / 8)^FD\(dpi) dpi  \(widthDots)x\(heightDots) dots^FS"

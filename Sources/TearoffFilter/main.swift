@@ -54,6 +54,8 @@ func run() -> Int32 {
     let extraCodes = (opts["TearoffExtras"] ?? "True").lowercased() != "false"
     let darkness = opts["Darkness"].flatMap { Int($0) }
     let speed = opts["PrintSpeed"].flatMap { Int($0) }
+    let shiftDown = Driver.shift(fromChoice: opts["TearoffShiftDown"])
+    let shiftRight = Driver.shift(fromChoice: opts["TearoffShiftRight"])
 
     // Input: a file argument, or the job on stdin.
     let input: URL
@@ -95,7 +97,7 @@ func run() -> Int32 {
     var zplBytes = 0
     for (i, l) in labels.enumerated() {
         // darkness is a printer setting (~SD): send it once, ahead of the first label
-        let settings = PrintSettings(darkness: i == 0 ? darkness : nil, speed: speed)
+        let settings = PrintSettings(darkness: i == 0 ? darkness : nil, speed: speed, topOffset: shiftDown, leftOffset: shiftRight)
         let zpl = trace.measure("zpl.encode") { Data(ZPL.label(l.image, copies: copies, settings: settings).utf8) }
         zplBytes += zpl.count
         trace.measure("zpl.write") { FileHandle.standardOutput.write(zpl) }

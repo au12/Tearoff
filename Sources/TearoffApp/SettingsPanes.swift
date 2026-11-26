@@ -166,6 +166,8 @@ struct PrinterPane: View {
             model.scheduleQueueSync()
         }
         .onChange(of: model.settings.speed) { _ in model.scheduleQueueSync() }
+        .onChange(of: model.settings.topOffset) { _ in model.scheduleQueueSync() }
+        .onChange(of: model.settings.leftOffset) { _ in model.scheduleQueueSync() }
         .onChange(of: model.settings.darkness == nil) { _ in model.scheduleQueueSync() }
     }
 

@@ -220,11 +220,12 @@ final class AppModel: ObservableObject {
         }
         let (w, h) = settings.labelSize.dots(dpi: settings.dpi)
         let dpi = settings.dpi
+        let shift = settings.printSettings
         net.async { [weak self] in
             var err: String? = nil
             do {
                 switch what {
-                case "test": try ZebraPrinter.send(ZPL.testLabel(widthDots: w, heightDots: h, dpi: dpi), to: target, title: "Test label")
+                case "test": try ZebraPrinter.send(ZPL.testLabel(widthDots: w, heightDots: h, dpi: dpi, settings: shift), to: target, title: "Test label")
                 case "calibrate": try ZebraPrinter.calibrate(target)
                 case "feed": try ZebraPrinter.feed(target)
                 case "config": try ZebraPrinter.printConfiguration(target)
@@ -409,10 +410,12 @@ final class AppModel: ObservableObject {
             alert = "This copy of Tearoff is missing its printer filter. Reinstall Tearoff.app."
             return
         }
-        let req = Driver.InstallRequest(queueName: queueName, displayName: displayName, deviceURI: uri,
+        var req = Driver.InstallRequest(queueName: queueName, displayName: displayName, deviceURI: uri,
                                         dpi: settings.dpi, label: settings.labelSize,
                                         darkness: settings.darkness, speed: settings.speed,
                                         extraCodes: settings.extraCodes, convertQueues: convert)
+        req.topOffset = settings.topOffset
+        req.leftOffset = settings.leftOffset
         let trace = PerfTrace()
         do {
             // driver files from the installer package: just add the printer (usually no password)
@@ -483,7 +486,8 @@ final class AppModel: ObservableObject {
         let qs = tearoffQueues
         net.async {
             for q in qs {
-                Driver.setDefaults(queue: q, dpi: s.dpi, label: s.labelSize, darkness: s.darkness, speed: s.speed, extras: s.extraCodes)
+                Driver.setDefaults(queue: q, dpi: s.dpi, label: s.labelSize, darkness: s.darkness, speed: s.speed, extras: s.extraCodes,
+                                   topOffset: s.topOffset, leftOffset: s.leftOffset)
             }
         }
     }
