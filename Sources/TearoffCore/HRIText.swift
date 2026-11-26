@@ -135,9 +135,10 @@ public enum HRIText {
         // does the printed line say what the barcode says?
         var verified: Verification? = nil
         if let read = services.read, let src = source {
-            let pad = max(4, line.height / 3)
-            let r = toSource(PixelRect(x0: max(0, line.x0 - pad), y0: max(0, line.y0 - pad),
-                                       x1: min(out.width, line.x1 + pad), y1: min(out.height, line.y1 + pad)))
+            let b = line.band
+            let pad = max(4, b.height / 3)
+            let r = toSource(PixelRect(x0: max(0, b.x0 - pad), y0: max(0, b.y0 - pad),
+                                       x1: min(out.width, b.x1 + pad), y1: min(out.height, b.y1 + pad)))
             let crop = src.cropped(r)
             if crop.width > 4, crop.height > 4, let readings = read(crop), !readings.isEmpty {
                 // OCR ran and read something else: it isn't the barcode's text, leave it be
@@ -147,7 +148,7 @@ public enum HRIText {
         }
         if verified == nil {
             // no OCR: only when it's the one line of text on the label and has the right length
-            let n = glyphCount(out, in: line)
+            let n = glyphCount(out, in: line.band)
             guard all.count == 1, n >= chars - max(2, chars / 5), n <= chars + 1 else { return nil }
             verified = .layout
         }
