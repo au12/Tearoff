@@ -118,12 +118,13 @@ final class ZPLTests: XCTestCase {
 
     func testShiftIsAlwaysSentAndReachesTheTestLabel() {
         let img = GrayImage(width: 812, height: 1218)
-        // zero is sent too, so a shift another Mac left in the printer doesn't carry over
-        XCTAssertTrue(ZPL.label(img).contains("^LT0^LS0"))
+        // no shift: leave the printer's own Label Top / Left Position alone
+        XCTAssertFalse(ZPL.label(img).contains("^LT"))
+        XCTAssertFalse(ZPL.label(img).contains("^LS"))
         XCTAssertTrue(ZPL.label(img, settings: PrintSettings(topOffset: 60, leftOffset: 8)).contains("^LT60^LS-8"))
         XCTAssertTrue(ZPL.label(img, settings: PrintSettings(topOffset: 500)).contains("^LT120"))
         let t = ZPL.testLabel(widthDots: 812, heightDots: 1218, dpi: 203, settings: PrintSettings(topOffset: -40))
-        XCTAssertTrue(t.contains("^LT-40^LS0"))
+        XCTAssertTrue(t.contains("^LT-40") && !t.contains("^LS"))
     }
 }
 

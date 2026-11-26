@@ -104,7 +104,7 @@ else
 fi
 
 echo "→ The queue's Shift Label Down option reaches the printer"
-grep -q '\^LT0\^LS0' "$OUT/job-1.zpl" || { echo "FAIL shift: job 1 didn't reset the shift"; STATUS=1; }
+grep -q '\^LT\|\^LS' "$OUT/job-1.zpl" && { echo "FAIL shift: job 1 overrode the printer's own label position"; STATUS=1; }
 N=$(( N + 1 ))
 lp -d TearoffTest -o TearoffShiftDown=40 -o TearoffShiftRight=n8 "tests/fixtures/06_page_4x6_vector.pdf" >/dev/null || STATUS=1
 for _ in $(seq 1 30); do [[ -s "$OUT/job-$N.zpl" ]] && break; sleep 1; done

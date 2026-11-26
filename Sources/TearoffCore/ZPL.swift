@@ -14,10 +14,14 @@ public struct PrintSettings: Codable, Equatable {
         self.darkness = darkness; self.speed = speed; self.topOffset = topOffset; self.leftOffset = leftOffset
     }
 
-    /// ^LT and ^LS, always sent (zero too): the printer keeps the last values it was given until it's
-    /// switched off, so a shift one Mac sent would otherwise carry over to the next Mac's labels.
+    /// ^LT / ^LS, only when Tearoff's own shift isn't zero. Sending them in every format would
+    /// overwrite the printer's saved Label Top / Left Position, which is where Zebra says a
+    /// printer's fixed offset belongs (it then applies to every Mac and app).
     public var shiftCommands: String {
-        "^LT\(max(-120, min(120, topOffset)))^LS\(-max(-200, min(200, leftOffset)))"
+        var s = ""
+        if topOffset != 0 { s += "^LT\(max(-120, min(120, topOffset)))" }
+        if leftOffset != 0 { s += "^LS\(-max(-200, min(200, leftOffset)))" }
+        return s
     }
 }
 
