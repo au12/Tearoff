@@ -3,13 +3,15 @@ import Foundation
 /// The system's text engines, as Tearoff needs them (Apple Vision and Core Text, supplied by
 /// TearoffKit so this module stays pure Swift).
 public struct TextServices {
-    /// Reads the text in a gray image, best guesses first. Nil when no reader can run.
-    public var read: ((GrayImage) -> [String]?)?
+    /// Reads the text in a gray image, best guesses first; `fast` trades accuracy for speed. Nil
+    /// when no reader can run.
+    public var read: ((_ image: GrayImage, _ fast: Bool) -> [String]?)?
     /// Draws `text` black on white at `pixelsPerEm`, in a face that tells l, I and 1 (and O and 0)
     /// apart.
     public var draw: (_ text: String, _ pixelsPerEm: Double) -> GrayImage?
 
-    public init(read: ((GrayImage) -> [String]?)?, draw: @escaping (_ text: String, _ pixelsPerEm: Double) -> GrayImage?) {
+    public init(read: ((_ image: GrayImage, _ fast: Bool) -> [String]?)?,
+                draw: @escaping (_ text: String, _ pixelsPerEm: Double) -> GrayImage?) {
         self.read = read
         self.draw = draw
     }
@@ -139,11 +141,26 @@ public enum HRIText {
             let pad = max(4, b.height / 3)
             let r = toSource(PixelRect(x0: max(0, b.x0 - pad), y0: max(0, b.y0 - pad),
                                        x1: min(out.width, b.x1 + pad), y1: min(out.height, b.y1 + pad)))
-            let crop = src.cropped(r)
-            if crop.width > 4, crop.height > 4, let readings = read(crop), !readings.isEmpty {
-                // OCR ran and read something else: it isn't the barcode's text, leave it be
-                guard matches(readings, value) else { return nil }
-                verified = .ocr
+            var crop = src.cropped(r)
+            // OCR only needs the letters about 36 px tall, not the full resolution: far quicker
+            let letters = Double(b.height) * Double(crop.height) / Double(max(1, b.height + 2 * pad))
+            let f = 36 / max(1, letters)
+            if f < 0.9 {
+                crop = crop.resampled(width: max(8, Int(Double(crop.width) * f)), height: max(8, Int(Double(crop.height) * f)))
+            }
+            if crop.width > 4, crop.height > 4 {
+                let quick = read(crop, true)
+                if let q = quick, matches(q, value) {
+                    verified = .ocr
+                } else {
+                    let careful = read(crop, false)
+                    if let c = careful, matches(c, value) {
+                        verified = .ocr
+                    } else if !(quick ?? []).isEmpty || !(careful ?? []).isEmpty {
+                        // OCR ran and read something else: it isn't the barcode's text, leave it be
+                        return nil
+                    }
+                }
             }
         }
         if verified == nil {

@@ -644,12 +644,12 @@ final class PrintQualityTests: XCTestCase {
         XCTAssertGreaterThan(ink?.height ?? 0, 30, "and a little larger")
 
         // OCR reads something else: it isn't the barcode's text, so it stays
-        let other = TextServices(read: { _ in ["RETURN SLIP"] }, draw: blocks.draw)
+        let other = TextServices(read: { _, _ in ["RETURN SLIP"] }, draw: blocks.draw)
         var kept = img
         XCTAssertNil(HRIText.retypeset(&kept, code: code, value: value, source: img, toSource: { $0 }, services: other))
         XCTAssertEqual(kept, img)
-        // OCR mixing up l and I still matches
-        let ocr = TextServices(read: { _ in ["D7SnjMIpRRMA"] }, draw: blocks.draw)
+        // OCR mixing up l and I still matches (here only the careful second reading gets it right)
+        let ocr = TextServices(read: { _, fast in fast ? ["D7SnjMIpRRNA"] : ["D7SnjMIpRRMA"] }, draw: blocks.draw)
         var read = img
         XCTAssertEqual(HRIText.retypeset(&read, code: code, value: value, source: img, toSource: { $0 }, services: ocr), .ocr)
         // two lines of text and no OCR: can't tell which is the barcode's, leave them

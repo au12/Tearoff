@@ -11,10 +11,10 @@ public enum SystemText {
     public static let services = TextServices(read: read, draw: draw)
 
     /// On-device OCR (nothing leaves the Mac). Nil when Vision can't run here.
-    static func read(_ img: GrayImage) -> [String]? {
+    static func read(_ img: GrayImage, fast: Bool) -> [String]? {
         guard let cg = img.cgImage() else { return nil }
         let request = VNRecognizeTextRequest()
-        request.recognitionLevel = .accurate
+        request.recognitionLevel = fast ? .fast : .accurate
         request.usesLanguageCorrection = false        // codes aren't words
         request.usesCPUOnly = true                    // stays in-process, which a sandboxed print filter needs
         do {
